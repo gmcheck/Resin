@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/Resinat/Resin/internal/node"
 )
@@ -40,6 +41,8 @@ type Platform struct {
 	ReverseProxyFixedAccountHeaders  []string
 	AllocationPolicy                 AllocationPolicy
 	PassiveCircuitBreakerDisabled    bool
+	MaxAccountsPerIP                 int
+	IPAccountWindowNs                int64
 
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
@@ -155,6 +158,24 @@ func (p *Platform) evaluateNode(
 	}
 
 	return true
+}
+
+// DefaultIPAccountWindowNs is the rolling window applied to the per-IP account
+// quota when ip_account_window is not explicitly configured.
+const DefaultIPAccountWindowNs = int64(2 * time.Hour)
+
+// IPQuotaEnabled reports whether the per-IP account quota is active.
+func (p *Platform) IPQuotaEnabled() bool {
+	return p.MaxAccountsPerIP > 0
+}
+
+// EffectiveIPAccountWindowNs returns the configured quota window, falling back
+// to DefaultIPAccountWindowNs when unset (0).
+func (p *Platform) EffectiveIPAccountWindowNs() int64 {
+	if p.IPAccountWindowNs > 0 {
+		return p.IPAccountWindowNs
+	}
+	return DefaultIPAccountWindowNs
 }
 
 // MatchRegionFilter applies include/exclude region filters.

@@ -18,6 +18,40 @@ function containsAny(source: string, chars: string): boolean {
 
 export const platformNameRuleHint = "平台名不能包含 .:|/\\@?#%~、空格、Tab、换行、回车，也不能为保留字。";
 
+const goDurationPattern = /^(?:\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/;
+const durationUnitSeconds: Record<string, number> = {
+  ns: 1e-9,
+  us: 1e-6,
+  "µs": 1e-6,
+  ms: 1e-3,
+  s: 1,
+  m: 60,
+  h: 3600,
+};
+
+// parseGoDurationSeconds validates a Go duration string (e.g. "2h", "90m",
+// "1h30m") and returns its total length in seconds, or null when invalid.
+function parseGoDurationSeconds(input: string): number | null {
+  const raw = input.trim();
+  if (!raw || !goDurationPattern.test(raw)) {
+    return null;
+  }
+  let total = 0;
+  for (const match of raw.matchAll(/(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g)) {
+    total += Number(match[1]) * (durationUnitSeconds[match[2]] ?? 0);
+  }
+  return total > 0 ? total : null;
+}
+
+export function parseMaxAccountsPerIP(input: string | undefined): number {
+  const raw = input?.trim() ?? "";
+  if (!raw) {
+    return 0;
+  }
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
 export const platformFormSchema = z.object({
   name: z.string().trim()
     .min(1, "平台名称不能为空")
@@ -38,6 +72,8 @@ export const platformFormSchema = z.object({
   reverse_proxy_fixed_account_header: z.string().optional(),
   allocation_policy: z.enum(allocationPolicies),
   passive_circuit_breaker_disabled: z.boolean(),
+  max_accounts_per_ip_text: z.string().optional(),
+  ip_account_window: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (
     value.reverse_proxy_empty_account_behavior === "FIXED_HEADER" &&
@@ -47,6 +83,27 @@ export const platformFormSchema = z.object({
       code: "custom",
       path: ["reverse_proxy_fixed_account_header"],
       message: "用于提取 Account 的 Headers 不能为空",
+    });
+  }
+
+  const maxRaw = value.max_accounts_per_ip_text?.trim() ?? "";
+  if (maxRaw) {
+    const parsed = Number(maxRaw);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["max_accounts_per_ip_text"],
+        message: "每 IP 最大账号数必须是不小于 0 的整数",
+      });
+    }
+  }
+
+  const windowRaw = value.ip_account_window?.trim() ?? "";
+  if (windowRaw && parseGoDurationSeconds(windowRaw) === null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["ip_account_window"],
+      message: "统计窗口必须是正的时长，例如 2h、90m 或 1h30m",
     });
   }
 });
@@ -63,11 +120,15 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   reverse_proxy_fixed_account_header: "Authorization",
   allocation_policy: "BALANCED",
   passive_circuit_breaker_disabled: false,
+  max_accounts_per_ip_text: "",
+  ip_account_window: "",
 };
 
 export function platformToFormValues(platform: Platform): PlatformFormValues {
   const regexFilters = Array.isArray(platform.regex_filters) ? platform.regex_filters : [];
   const regionFilters = Array.isArray(platform.region_filters) ? platform.region_filters : [];
+  // "0s" means the window is unset (runtime falls back to the default 2h).
+  const ipAccountWindow = platform.ip_account_window && platform.ip_account_window !== "0s" ? platform.ip_account_window : "";
 
   return {
     name: platform.name,
@@ -79,10 +140,13 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
     reverse_proxy_fixed_account_header: platform.reverse_proxy_fixed_account_header,
     allocation_policy: platform.allocation_policy,
     passive_circuit_breaker_disabled: platform.passive_circuit_breaker_disabled,
+    max_accounts_per_ip_text: platform.max_accounts_per_ip > 0 ? String(platform.max_accounts_per_ip) : "",
+    ip_account_window: ipAccountWindow,
   };
 }
 
 function toPlatformPayloadBase(values: PlatformFormValues) {
+  const ipAccountWindow = values.ip_account_window?.trim() || undefined;
   return {
     name: values.name.trim(),
     regex_filters: parseLinesToList(values.regex_filters_text),
@@ -92,6 +156,8 @@ function toPlatformPayloadBase(values: PlatformFormValues) {
     reverse_proxy_fixed_account_header: parseHeaderLines(values.reverse_proxy_fixed_account_header).join("\n"),
     allocation_policy: values.allocation_policy,
     passive_circuit_breaker_disabled: values.passive_circuit_breaker_disabled,
+    max_accounts_per_ip: parseMaxAccountsPerIP(values.max_accounts_per_ip_text),
+    ip_account_window: ipAccountWindow,
   };
 }
 

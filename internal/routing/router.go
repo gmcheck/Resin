@@ -3,6 +3,7 @@ package routing
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/netip"
 	"strings"
@@ -229,7 +230,7 @@ func (r *Router) createOrAbortStickyLease(
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
 ) (Lease, xsync.ComputeOp, RouteResult, error) {
-	newLease, createdResult, err := r.createLease(plat, state, targetDomain, now, nowNs)
+	newLease, createdResult, err := r.createLease(plat, state, account, targetDomain, now, nowNs)
 	if err != nil {
 		r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, account)
 		lease, op := abortLeaseCreate(previous, hadPreviousLease)
@@ -314,11 +315,12 @@ func (r *Router) tryLeaseSameIPRotation(
 func (r *Router) createLease(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	account string,
 	targetDomain string,
 	now time.Time,
 	nowNs int64,
 ) (Lease, RouteResult, error) {
-	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
+	h, entry, err := r.selectRouteForLease(plat, state, account, targetDomain, nowNs)
 	if err != nil {
 		return Lease{}, RouteResult{}, err
 	}
@@ -339,6 +341,109 @@ func (r *Router) createLease(
 		EgressIP:     lease.EgressIP,
 		LeaseCreated: true,
 	}, nil
+}
+
+// quotaPickAttempts bounds pick-retries when the per-IP account quota blocks
+// the randomly selected node (design §4).
+const quotaPickAttempts = 8
+
+// selectRouteForLease picks a node for a new sticky lease of account. When the
+// platform has no per-IP account quota it delegates to the plain live-random
+// path; otherwise every pick is admitted through IPAccountWindow.ReserveIfEligible,
+// which atomically checks the quota and records the account→IP binding.
+func (r *Router) selectRouteForLease(
+	plat *platform.Platform,
+	state *PlatformRoutingState,
+	account string,
+	targetDomain string,
+	nowNs int64,
+) (node.Hash, *node.NodeEntry, error) {
+	if !plat.IPQuotaEnabled() {
+		return r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
+	}
+
+	windowNs := plat.EffectiveIPAccountWindowNs()
+	max := plat.MaxAccountsPerIP
+	win := state.IPWindow
+	for i := 0; i < quotaPickAttempts; i++ {
+		h, entry, err := r.pickLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
+		if err != nil {
+			return node.Zero, nil, err
+		}
+		if entry == nil {
+			continue // picked node vanished from pool; retry
+		}
+		if win.ReserveIfEligible(entry.GetEgressIP(), account, nowNs, windowNs, max) {
+			return h, entry, nil
+		}
+	}
+	return r.fallbackQuotaRoute(plat, state, account, nowNs, windowNs, max)
+}
+
+// fallbackQuotaRoute is the fail-open fallback for when every pick was blocked
+// by the per-IP account quota: it selects the routable IP with the fewest
+// distinct in-window accounts (tie: lowest live lease load) and force-reserves
+// it, subject to a hard ceiling of max+1 accounts per IP per window. If no IP
+// is under the ceiling, the request fails closed with ErrNoAvailableNodes.
+func (r *Router) fallbackQuotaRoute(
+	plat *platform.Platform,
+	state *PlatformRoutingState,
+	account string,
+	nowNs int64,
+	windowNs int64,
+	max int,
+) (node.Hash, *node.NodeEntry, error) {
+	counts := state.IPWindow.CountsByIP(nowNs, windowNs)
+
+	type ipCandidate struct {
+		ip    netip.Addr
+		hash  node.Hash
+		entry *node.NodeEntry
+		count int
+		load  int64
+	}
+	seen := make(map[netip.Addr]bool)
+	var best *ipCandidate
+	plat.View().Range(func(h node.Hash) bool {
+		entry, ok := r.pool.GetEntry(h)
+		if !ok {
+			return true
+		}
+		ip := entry.GetEgressIP()
+		if !ip.IsValid() || seen[ip] {
+			return true
+		}
+		seen[ip] = true
+		cand := ipCandidate{
+			ip:    ip,
+			hash:  h,
+			entry: entry,
+			count: counts[ip],
+			load:  state.IPLoadStats.Get(ip),
+		}
+		if best == nil || cand.count < best.count || (cand.count == best.count && cand.load < best.load) {
+			copied := cand
+			best = &copied
+		}
+		return true
+	})
+	if best == nil {
+		return node.Zero, nil, ErrNoAvailableNodes
+	}
+
+	if !state.IPWindow.ReserveForcedFallback(best.ip, account, nowNs, windowNs, max) {
+		log.Printf(
+			"event=ip_quota_exhausted platform=%s account=%s max=%d ceiling=%d",
+			plat.ID, account, max, max+1,
+		)
+		return node.Zero, nil, ErrNoAvailableNodes
+	}
+
+	log.Printf(
+		"event=ip_quota_exceeded_fallback platform=%s account=%s ip=%s window_accounts=%d max=%d lease_load=%d",
+		plat.ID, account, best.ip, best.count, max, best.load,
+	)
+	return best.hash, best.entry, nil
 }
 
 func (r *Router) cleanupPreviousLease(
@@ -395,12 +500,11 @@ func (r *Router) selectLiveRandomRoute(
 ) (node.Hash, *node.NodeEntry, error) {
 	var lastMissing node.Hash
 	for i := 0; i < livePickAttempts; i++ {
-		h, err := randomRoute(plat, stats, r.pool, targetDomain, r.authorities(), r.p2cWindow())
+		h, entry, err := r.pickLiveRandomRoute(plat, stats, targetDomain)
 		if err != nil {
 			return node.Zero, nil, err
 		}
-		entry, ok := r.pool.GetEntry(h)
-		if ok {
+		if entry != nil {
 			return h, entry, nil
 		}
 		lastMissing = h
@@ -409,6 +513,25 @@ func (r *Router) selectLiveRandomRoute(
 		return node.Zero, nil, fmt.Errorf("%w: selected node %s no longer in pool", ErrNoAvailableNodes, lastMissing.Hex())
 	}
 	return node.Zero, nil, ErrNoAvailableNodes
+}
+
+// pickLiveRandomRoute performs one randomRoute pick and resolves the picked
+// node to a live pool entry. It returns a nil entry (without error) when the
+// picked node vanished from the pool between selection and lookup.
+func (r *Router) pickLiveRandomRoute(
+	plat *platform.Platform,
+	stats *IPLoadStats,
+	targetDomain string,
+) (node.Hash, *node.NodeEntry, error) {
+	h, err := randomRoute(plat, stats, r.pool, targetDomain, r.authorities(), r.p2cWindow())
+	if err != nil {
+		return node.Zero, nil, err
+	}
+	entry, ok := r.pool.GetEntry(h)
+	if !ok {
+		return h, nil, nil
+	}
+	return h, entry, nil
 }
 
 func chooseSameIPRotationCandidate(
@@ -527,6 +650,12 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 		return lease, xsync.UpdateOp
 	})
 
+	// Control-plane-created bindings also consume per-IP quota accounting:
+	// risk control counts real distinct accounts per IP, not just hot-path ones.
+	if plat, ok := r.pool.GetPlatform(platformID); ok && plat.IPQuotaEnabled() {
+		state.IPWindow.Touch(ip, account, time.Now().UnixNano())
+	}
+
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       eventType,
 		PlatformID: platformID,
@@ -549,6 +678,7 @@ func (r *Router) SnapshotIPLoad(platformID string) map[netip.Addr]int64 {
 
 // RestoreLeases restores leases from persistence during bootstrap.
 func (r *Router) RestoreLeases(leases []model.Lease) {
+	nowNs := time.Now().UnixNano()
 	for _, ml := range leases {
 		h, err := node.ParseHex(ml.NodeHash)
 		if err != nil {
@@ -572,7 +702,44 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 		}
 		// Directly insert into table and stats
 		state.Leases.CreateLease(ml.Account, l)
+
+		// Seed the per-IP account window from restored leases so quota
+		// accounting survives restarts: without this, an IP with restored
+		// leases could immediately accept max fresh accounts on top.
+		if plat, ok := r.pool.GetPlatform(ml.PlatformID); ok && plat.IPQuotaEnabled() {
+			windowNs := plat.EffectiveIPAccountWindowNs()
+			if nowNs-ml.CreatedAtNs < windowNs {
+				state.IPWindow.Touch(ip, ml.Account, ml.CreatedAtNs)
+			}
+		}
 	}
+}
+
+// SnapshotIPQuota returns a point-in-time view of the per-IP account quota
+// state for observability. windowNs comes from the platform's effective
+// configuration. Returns nil when the platform has no routing state.
+func (r *Router) SnapshotIPQuota(platformID string, windowNs int64) *IPQuotaSnapshot {
+	state, ok := r.states.Load(platformID)
+	if !ok {
+		return nil
+	}
+	nowNs := time.Now().UnixNano()
+	blocked, fallback := state.IPWindow.Stats()
+	return &IPQuotaSnapshot{
+		BlockedTotal:  blocked,
+		FallbackTotal: fallback,
+		AccountsByIP:  state.IPWindow.CountsByIP(nowNs, windowNs),
+	}
+}
+
+// IPQuotaSnapshot is a point-in-time view of per-IP account quota state.
+type IPQuotaSnapshot struct {
+	// BlockedTotal counts quota-blocked picks on the normal path.
+	BlockedTotal int64
+	// FallbackTotal counts forced fail-open reservations.
+	FallbackTotal int64
+	// AccountsByIP maps egress IP to distinct in-window account count.
+	AccountsByIP map[netip.Addr]int
 }
 
 // RangeLeases iterates over all leases for a platform.

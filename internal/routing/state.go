@@ -5,6 +5,7 @@ package routing
 type PlatformRoutingState struct {
 	Leases      *LeaseTable
 	IPLoadStats *IPLoadStats
+	IPWindow    *IPAccountWindow
 }
 
 // NewPlatformRoutingState creates a new state instance.
@@ -13,5 +14,6 @@ func NewPlatformRoutingState() *PlatformRoutingState {
 	return &PlatformRoutingState{
 		Leases:      NewLeaseTable(stats),
 		IPLoadStats: stats,
+		IPWindow:    NewIPAccountWindow(),
 	}
 }

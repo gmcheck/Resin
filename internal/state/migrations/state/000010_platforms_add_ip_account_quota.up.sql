@@ -1,0 +1,2 @@
+ALTER TABLE platforms ADD COLUMN max_accounts_per_ip INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE platforms ADD COLUMN ip_account_window_ns INTEGER NOT NULL DEFAULT 0;

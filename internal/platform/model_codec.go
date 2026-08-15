@@ -71,6 +71,8 @@ func NewConfiguredPlatform(
 	fixedAccountHeader string,
 	allocationPolicy string,
 	passiveCircuitBreakerDisabled bool,
+	maxAccountsPerIP int,
+	ipAccountWindowNs int64,
 ) *Platform {
 	normalizedFixedHeaders, fixedHeaders, err := NormalizeFixedAccountHeaders(fixedAccountHeader)
 	if err != nil {
@@ -85,6 +87,8 @@ func NewConfiguredPlatform(
 	plat.ReverseProxyFixedAccountHeaders = append([]string(nil), fixedHeaders...)
 	plat.AllocationPolicy = ParseAllocationPolicy(allocationPolicy)
 	plat.PassiveCircuitBreakerDisabled = passiveCircuitBreakerDisabled
+	plat.MaxAccountsPerIP = maxAccountsPerIP
+	plat.IPAccountWindowNs = ipAccountWindowNs
 	return plat
 }
 
@@ -129,6 +133,12 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 			ReverseProxyEmptyAccountBehaviorFixedHeader,
 		)
 	}
+	if mp.MaxAccountsPerIP < 0 {
+		return nil, fmt.Errorf("decode platform %s max_accounts_per_ip: must be >= 0, got %d", mp.ID, mp.MaxAccountsPerIP)
+	}
+	if mp.IPAccountWindowNs < 0 {
+		return nil, fmt.Errorf("decode platform %s ip_account_window_ns: must be >= 0, got %d", mp.ID, mp.IPAccountWindowNs)
+	}
 
 	return NewConfiguredPlatform(
 		mp.ID,
@@ -141,5 +151,7 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		fixedHeader,
 		mp.AllocationPolicy,
 		mp.PassiveCircuitBreakerDisabled,
+		mp.MaxAccountsPerIP,
+		mp.IPAccountWindowNs,
 	), nil
 }

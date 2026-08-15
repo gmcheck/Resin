@@ -262,6 +262,45 @@ export function PlatformPage() {
               </div>
 
               <div className="field-group">
+                <label className="field-label" htmlFor="create-max-accounts-per-ip">
+                  {t("单 IP 最大账号数（可选）")}
+                </label>
+                <Input
+                  id="create-max-accounts-per-ip"
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder={t("例如 3")}
+                  invalid={Boolean(createForm.formState.errors.max_accounts_per_ip_text)}
+                  {...createForm.register("max_accounts_per_ip_text")}
+                />
+                {createForm.formState.errors.max_accounts_per_ip_text?.message ? (
+                  <p className="field-error">{t(createForm.formState.errors.max_accounts_per_ip_text.message)}</p>
+                ) : null}
+                <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  {t("限制同一出口 IP 在统计窗口内最多绑定的去重账号数，留空或 0 表示不限制。")}
+                </p>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-ip-account-window">
+                  {t("账号统计窗口（可选）")}
+                </label>
+                <Input
+                  id="create-ip-account-window"
+                  placeholder={t("例如 2h，默认 2h")}
+                  invalid={Boolean(createForm.formState.errors.ip_account_window)}
+                  {...createForm.register("ip_account_window")}
+                />
+                {createForm.formState.errors.ip_account_window?.message ? (
+                  <p className="field-error">{t(createForm.formState.errors.ip_account_window.message)}</p>
+                ) : null}
+                <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  {t("账号数按此时长滑动窗口统计，仅在启用单 IP 限制时生效。")}
+                </p>
+              </div>
+
+              <div className="field-group">
                 <label className="field-label" htmlFor="create-miss-action">
                   {t("反向代理账号解析出错策略")}
                 </label>

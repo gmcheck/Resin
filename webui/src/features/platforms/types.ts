@@ -14,6 +14,8 @@ export type Platform = {
   reverse_proxy_fixed_account_header: string;
   allocation_policy: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled: boolean;
+  max_accounts_per_ip: number;
+  ip_account_window: string;
   updated_at: string;
 };
 
@@ -34,6 +36,8 @@ export type PlatformCreateInput = {
   reverse_proxy_fixed_account_header?: string;
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
+  max_accounts_per_ip?: number;
+  ip_account_window?: string;
 };
 
 export type PlatformUpdateInput = {
@@ -46,6 +50,8 @@ export type PlatformUpdateInput = {
   reverse_proxy_fixed_account_header?: string;
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
+  max_accounts_per_ip?: number;
+  ip_account_window?: string;
 };
 
 export type PlatformLease = {
@@ -68,4 +74,18 @@ export type ListPlatformLeasesInput = {
   fuzzy?: boolean;
   sort_by?: PlatformLeaseSortBy;
   sort_order?: SortOrder;
+};
+
+export type PlatformIPQuotaIPEntry = {
+  ip: string;
+  accounts: number;
+};
+
+export type PlatformIPQuotaSnapshot = {
+  enabled: boolean;
+  max_accounts_per_ip: number;
+  ip_account_window: string;
+  ip_quota_blocked_total: number;
+  ip_quota_fallback_total: number;
+  ips: PlatformIPQuotaIPEntry[];
 };

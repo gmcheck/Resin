@@ -21,6 +21,7 @@ import type {
   SnapshotPlatformNodePool,
   TimeWindow,
 } from "../dashboard/types";
+import { PlatformIPQuotaPanel } from "./PlatformIPQuotaPanel";
 import type { Platform } from "./types";
 
 type RangeKey = "1h" | "6h" | "24h";
@@ -1009,6 +1010,8 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
             <span>{t("分桶")} {formatCount(snapshotLatency?.bin_width_ms ?? 0)}ms</span>
           </div>
         </Card>
+
+        <PlatformIPQuotaPanel platform={platform} />
       </div>
 
       {isInitialLoading ? (

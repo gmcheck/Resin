@@ -890,6 +890,8 @@ func TestDeletePlatform_DoesNotDecodeCorruptPersistedFiltersJSON(t *testing.T) {
 		"",
 		platformRow.AllocationPolicy,
 		true,
+		0,
+		0,
 	))
 
 	cp := &ControlPlaneService{
@@ -953,6 +955,8 @@ func TestResetPlatformToDefault_SupportsBuiltInDefaultPlatform(t *testing.T) {
 		"",
 		defaultRow.AllocationPolicy,
 		true,
+		defaultRow.MaxAccountsPerIP,
+		defaultRow.IPAccountWindowNs,
 	))
 
 	cp := &ControlPlaneService{
@@ -1095,6 +1099,8 @@ func TestResetPlatformToDefault_DoesNotDecodeCorruptPersistedFiltersJSON(t *test
 		"",
 		platformRow.AllocationPolicy,
 		true,
+		0,
+		0,
 	))
 
 	cp := &ControlPlaneService{

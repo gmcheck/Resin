@@ -4,6 +4,7 @@ import type {
   PageResponse,
   Platform,
   PlatformCreateInput,
+  PlatformIPQuotaSnapshot,
   PlatformLease,
   PlatformUpdateInput,
 } from "./types";
@@ -18,6 +19,8 @@ type ApiPlatform = Omit<Platform, "regex_filters" | "region_filters"> & {
   reverse_proxy_empty_account_behavior?: Platform["reverse_proxy_empty_account_behavior"] | null;
   reverse_proxy_fixed_account_header?: string | null;
   passive_circuit_breaker_disabled?: boolean | null;
+  max_accounts_per_ip?: number | null;
+  ip_account_window?: string | null;
 };
 
 type ApiPlatformLease = Partial<PlatformLease>;
@@ -46,6 +49,9 @@ function normalizePlatform(raw: ApiPlatform): Platform {
       typeof raw.reverse_proxy_fixed_account_header === "string" ? raw.reverse_proxy_fixed_account_header : "",
     passive_circuit_breaker_disabled:
       typeof raw.passive_circuit_breaker_disabled === "boolean" ? raw.passive_circuit_breaker_disabled : false,
+    max_accounts_per_ip:
+      typeof raw.max_accounts_per_ip === "number" && raw.max_accounts_per_ip > 0 ? raw.max_accounts_per_ip : 0,
+    ip_account_window: typeof raw.ip_account_window === "string" ? raw.ip_account_window : "0s",
   };
 }
 
@@ -167,4 +173,35 @@ export async function clearAllPlatformLeases(id: string): Promise<void> {
   await apiRequest<void>(`${basePath}/${id}/leases`, {
     method: "DELETE",
   });
+}
+
+// IPQuotaWireResponse mirrors the backend JSON shape of the ip-quota endpoint
+// (egress_ip / window_accounts inside ips entries).
+type IPQuotaWireResponse = {
+  enabled?: boolean;
+  max_accounts_per_ip?: number;
+  ip_account_window?: string;
+  ip_quota_blocked_total?: number;
+  ip_quota_fallback_total?: number;
+  ips?: Array<{ egress_ip?: string; window_accounts?: number } | null> | null;
+};
+
+export async function getPlatformIPQuota(id: string): Promise<PlatformIPQuotaSnapshot> {
+  const raw = await apiRequest<IPQuotaWireResponse>(`${basePath}/${id}/ip-quota`);
+  const maxAccounts = typeof raw.max_accounts_per_ip === "number" && raw.max_accounts_per_ip > 0 ? raw.max_accounts_per_ip : 0;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : maxAccounts > 0,
+    max_accounts_per_ip: maxAccounts,
+    ip_account_window: typeof raw.ip_account_window === "string" ? raw.ip_account_window : "0s",
+    ip_quota_blocked_total: typeof raw.ip_quota_blocked_total === "number" ? raw.ip_quota_blocked_total : 0,
+    ip_quota_fallback_total: typeof raw.ip_quota_fallback_total === "number" ? raw.ip_quota_fallback_total : 0,
+    ips: Array.isArray(raw.ips)
+      ? raw.ips
+          .map((item) => ({
+            ip: typeof item?.egress_ip === "string" ? item.egress_ip : "",
+            accounts: typeof item?.window_accounts === "number" ? item.window_accounts : 0,
+          }))
+          .filter((item) => item.ip !== "")
+      : [],
+  };
 }

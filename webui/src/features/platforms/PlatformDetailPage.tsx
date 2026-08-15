@@ -471,6 +471,18 @@ export function PlatformDetailPage() {
                   <span>{t("请求失败熔断")}</span>
                   <strong>{platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}</strong>
                 </span>
+                <span className="platform-fact">
+                  <span>{t("IP 配额")}</span>
+                  <strong>
+                    {platform.max_accounts_per_ip > 0
+                      ? `${platform.max_accounts_per_ip}${t(" 账号")}/IP · ${
+                          platform.ip_account_window && platform.ip_account_window !== "0s"
+                            ? formatGoDuration(platform.ip_account_window)
+                            : t("默认")
+                        }`
+                      : t("未启用")}
+                  </strong>
+                </span>
               </div>
             </div>
           </Card>
@@ -555,6 +567,45 @@ export function PlatformDetailPage() {
                       invalid={Boolean(editForm.formState.errors.sticky_ttl)}
                       {...editForm.register("sticky_ttl")}
                     />
+                  </div>
+
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="detail-edit-max-accounts-per-ip">
+                      {t("单 IP 最大账号数")}
+                    </label>
+                    <Input
+                      id="detail-edit-max-accounts-per-ip"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder={t("例如 3")}
+                      invalid={Boolean(editForm.formState.errors.max_accounts_per_ip_text)}
+                      {...editForm.register("max_accounts_per_ip_text")}
+                    />
+                    {editForm.formState.errors.max_accounts_per_ip_text?.message ? (
+                      <p className="field-error">{t(editForm.formState.errors.max_accounts_per_ip_text.message)}</p>
+                    ) : null}
+                    <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                      {t("限制同一出口 IP 在统计窗口内最多绑定的去重账号数，留空或 0 表示不限制。")}
+                    </p>
+                  </div>
+
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="detail-edit-ip-account-window">
+                      {t("账号统计窗口")}
+                    </label>
+                    <Input
+                      id="detail-edit-ip-account-window"
+                      placeholder={t("例如 2h，默认 2h")}
+                      invalid={Boolean(editForm.formState.errors.ip_account_window)}
+                      {...editForm.register("ip_account_window")}
+                    />
+                    {editForm.formState.errors.ip_account_window?.message ? (
+                      <p className="field-error">{t(editForm.formState.errors.ip_account_window.message)}</p>
+                    ) : null}
+                    <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                      {t("账号数按此时长滑动窗口统计，仅在启用单 IP 限制时生效。")}
+                    </p>
                   </div>
 
                   <div className="field-group">

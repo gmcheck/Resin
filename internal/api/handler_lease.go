@@ -191,3 +191,26 @@ func HandleIPLoad(cp *service.ControlPlaneService) http.HandlerFunc {
 		WritePage(w, http.StatusOK, entries, pg)
 	}
 }
+
+// HandleIPQuota returns a handler for GET /api/v1/platforms/{id}/ip-quota.
+func HandleIPQuota(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		platformID, ok := requireUUIDPathParam(w, r, "id", "platform_id")
+		if !ok {
+			return
+		}
+
+		resp, err := cp.GetIPQuota(platformID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		slices.SortStableFunc(resp.IPs, func(a, b service.IPQuotaIPEntry) int {
+			if a.WindowAccounts != b.WindowAccounts {
+				return b.WindowAccounts - a.WindowAccounts
+			}
+			return strings.Compare(a.EgressIP, b.EgressIP)
+		})
+		WriteJSON(w, http.StatusOK, resp)
+	}
+}

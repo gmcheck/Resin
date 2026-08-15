@@ -15,6 +15,8 @@ type Platform struct {
 	ReverseProxyFixedAccountHeader   string `json:"reverse_proxy_fixed_account_header"`
 	AllocationPolicy                 string `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    bool   `json:"passive_circuit_breaker_disabled"`
+	MaxAccountsPerIP                 int    `json:"max_accounts_per_ip"`
+	IPAccountWindowNs                int64  `json:"ip_account_window_ns"`
 	UpdatedAtNs                      int64  `json:"updated_at_ns"`
 }
 

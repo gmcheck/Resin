@@ -32,6 +32,8 @@ type PlatformResponse struct {
 	ReverseProxyFixedAccountHeader   string   `json:"reverse_proxy_fixed_account_header"`
 	AllocationPolicy                 string   `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    bool     `json:"passive_circuit_breaker_disabled"`
+	MaxAccountsPerIP                 int      `json:"max_accounts_per_ip"`
+	IPAccountWindow                  string   `json:"ip_account_window"`
 	UpdatedAt                        string   `json:"updated_at"`
 }
 
@@ -50,6 +52,8 @@ func platformToResponse(p model.Platform) PlatformResponse {
 		ReverseProxyFixedAccountHeader:   fixedHeader,
 		AllocationPolicy:                 p.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    p.PassiveCircuitBreakerDisabled,
+		MaxAccountsPerIP:                 p.MaxAccountsPerIP,
+		IPAccountWindow:                  time.Duration(p.IPAccountWindowNs).String(),
 		UpdatedAt:                        time.Unix(0, p.UpdatedAtNs).UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -76,6 +80,8 @@ type platformConfig struct {
 	ReverseProxyFixedAccountHeader   string
 	AllocationPolicy                 string
 	PassiveCircuitBreakerDisabled    bool
+	MaxAccountsPerIP                 int
+	IPAccountWindowNs                int64
 }
 
 func normalizePlatformMissAction(raw string) string {
@@ -121,6 +127,8 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 		ReverseProxyFixedAccountHeader:   normalizeHeaderFieldName(mp.ReverseProxyFixedAccountHeader),
 		AllocationPolicy:                 mp.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    mp.PassiveCircuitBreakerDisabled,
+		MaxAccountsPerIP:                 mp.MaxAccountsPerIP,
+		IPAccountWindowNs:                mp.IPAccountWindowNs,
 	}
 }
 
@@ -136,6 +144,8 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		ReverseProxyFixedAccountHeader:   cfg.ReverseProxyFixedAccountHeader,
 		AllocationPolicy:                 cfg.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    cfg.PassiveCircuitBreakerDisabled,
+		MaxAccountsPerIP:                 cfg.MaxAccountsPerIP,
+		IPAccountWindowNs:                cfg.IPAccountWindowNs,
 		UpdatedAtNs:                      updatedAtNs,
 	}
 }
@@ -156,6 +166,8 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.ReverseProxyFixedAccountHeader,
 		cfg.AllocationPolicy,
 		cfg.PassiveCircuitBreakerDisabled,
+		cfg.MaxAccountsPerIP,
+		cfg.IPAccountWindowNs,
 	), nil
 }
 
@@ -228,6 +240,22 @@ func setPlatformStickyTTL(cfg *platformConfig, d time.Duration) *ServiceError {
 		return invalidArg("sticky_ttl: must be > 0")
 	}
 	cfg.StickyTTLNs = int64(d)
+	return nil
+}
+
+func setPlatformMaxAccountsPerIP(cfg *platformConfig, max int) *ServiceError {
+	if max < 0 {
+		return invalidArg("max_accounts_per_ip: must be >= 0")
+	}
+	cfg.MaxAccountsPerIP = max
+	return nil
+}
+
+func setPlatformIPAccountWindow(cfg *platformConfig, d time.Duration) *ServiceError {
+	if d <= 0 {
+		return invalidArg("ip_account_window: must be > 0")
+	}
+	cfg.IPAccountWindowNs = int64(d)
 	return nil
 }
 
@@ -334,6 +362,8 @@ type CreatePlatformRequest struct {
 	ReverseProxyFixedAccountHeader   *string  `json:"reverse_proxy_fixed_account_header"`
 	AllocationPolicy                 *string  `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    *bool    `json:"passive_circuit_breaker_disabled"`
+	MaxAccountsPerIP                 *int     `json:"max_accounts_per_ip"`
+	IPAccountWindow                  *string  `json:"ip_account_window"`
 }
 
 // CreatePlatform creates a new platform.
@@ -390,6 +420,20 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 	}
 	if req.PassiveCircuitBreakerDisabled != nil {
 		cfg.PassiveCircuitBreakerDisabled = *req.PassiveCircuitBreakerDisabled
+	}
+	if req.MaxAccountsPerIP != nil {
+		if err := setPlatformMaxAccountsPerIP(&cfg, *req.MaxAccountsPerIP); err != nil {
+			return nil, err
+		}
+	}
+	if req.IPAccountWindow != nil {
+		d, err := time.ParseDuration(*req.IPAccountWindow)
+		if err != nil {
+			return nil, invalidArg("ip_account_window: " + err.Error())
+		}
+		if err := setPlatformIPAccountWindow(&cfg, d); err != nil {
+			return nil, err
+		}
 	}
 	if err := validatePlatformConfig(&cfg, true); err != nil {
 		return nil, err
@@ -507,6 +551,20 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 		return nil, err
 	} else if ok {
 		cfg.PassiveCircuitBreakerDisabled = disabled
+	}
+	if max, ok, err := patch.optionalInt("max_accounts_per_ip"); err != nil {
+		return nil, err
+	} else if ok {
+		if err := setPlatformMaxAccountsPerIP(&cfg, max); err != nil {
+			return nil, err
+		}
+	}
+	if d, ok, err := patch.optionalDurationString("ip_account_window"); err != nil {
+		return nil, err
+	} else if ok {
+		if err := setPlatformIPAccountWindow(&cfg, d); err != nil {
+			return nil, err
+		}
 	}
 	if err := validatePlatformConfig(&cfg, regionFiltersPatched); err != nil {
 		return nil, err

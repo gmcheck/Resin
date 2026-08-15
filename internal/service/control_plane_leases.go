@@ -169,3 +169,44 @@ func (s *ControlPlaneService) GetIPLoad(platformID string) ([]IPLoadEntry, error
 	}
 	return result, nil
 }
+
+// IPQuotaIPEntry is the per-IP section of the IP quota response.
+type IPQuotaIPEntry struct {
+	EgressIP       string `json:"egress_ip"`
+	WindowAccounts int    `json:"window_accounts"`
+}
+
+// IPQuotaResponse is the API response for per-IP account quota state.
+type IPQuotaResponse struct {
+	Enabled          bool             `json:"enabled"`
+	MaxAccountsPerIP int              `json:"max_accounts_per_ip"`
+	IPAccountWindow  string           `json:"ip_account_window"`
+	BlockedTotal     int64            `json:"ip_quota_blocked_total"`
+	FallbackTotal    int64            `json:"ip_quota_fallback_total"`
+	IPs              []IPQuotaIPEntry `json:"ips"`
+}
+
+// GetIPQuota returns the per-IP account quota state for a platform.
+func (s *ControlPlaneService) GetIPQuota(platformID string) (*IPQuotaResponse, error) {
+	plat, ok := s.Pool.GetPlatform(platformID)
+	if !ok {
+		return nil, notFound("platform not found")
+	}
+	resp := &IPQuotaResponse{
+		Enabled:          plat.IPQuotaEnabled(),
+		MaxAccountsPerIP: plat.MaxAccountsPerIP,
+		IPAccountWindow:  time.Duration(plat.EffectiveIPAccountWindowNs()).String(),
+		IPs:              []IPQuotaIPEntry{},
+	}
+	if snap := s.Router.SnapshotIPQuota(platformID, plat.EffectiveIPAccountWindowNs()); snap != nil {
+		resp.BlockedTotal = snap.BlockedTotal
+		resp.FallbackTotal = snap.FallbackTotal
+		for ip, accounts := range snap.AccountsByIP {
+			resp.IPs = append(resp.IPs, IPQuotaIPEntry{
+				EgressIP:       ip.String(),
+				WindowAccounts: accounts,
+			})
+		}
+	}
+	return resp, nil
+}

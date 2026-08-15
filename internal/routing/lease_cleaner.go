@@ -104,6 +104,11 @@ func (c *LeaseCleaner) sweep() {
 }
 
 func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingState, nowNs int64) {
+	// Prune expired per-IP account window entries alongside lease sweeping.
+	if plat, ok := c.router.pool.GetPlatform(platID); ok && plat.IPQuotaEnabled() {
+		state.IPWindow.Prune(nowNs, plat.EffectiveIPAccountWindowNs())
+	}
+
 	// Iterate over all leases for this platform
 	state.Leases.Range(func(account string, lease Lease) bool {
 		// Check against stop signal
