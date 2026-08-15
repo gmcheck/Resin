@@ -122,6 +122,9 @@ func extractErrnoCode(err error) string {
 }
 
 func normalizeErrno(errno syscall.Errno) string {
+	if name, ok := wsaErrnoName(errno); ok {
+		return name
+	}
 	switch errno {
 	case syscall.ECONNREFUSED:
 		return "ECONNREFUSED"
