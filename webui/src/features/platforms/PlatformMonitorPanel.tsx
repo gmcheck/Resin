@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Clock3, Layers, Link2, ShieldCheck, Waypoints } from "lucide-react";
+import type { ComponentProps } from "react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -23,6 +24,8 @@ import type {
 } from "../dashboard/types";
 import { PlatformIPQuotaPanel } from "./PlatformIPQuotaPanel";
 import type { Platform } from "./types";
+
+type PlatformIPQuotaPanelProps = ComponentProps<typeof PlatformIPQuotaPanel>;
 
 type RangeKey = "1h" | "6h" | "24h";
 
@@ -689,7 +692,15 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
   );
 }
 
-export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
+export function PlatformMonitorPanel({
+  platform,
+  quotaFocusTarget = null,
+  onManageLease,
+}: {
+  platform: Platform;
+  quotaFocusTarget?: PlatformIPQuotaPanelProps["focusTarget"];
+  onManageLease?: (account: string) => void;
+}) {
   const { locale, t } = useI18n();
   const [rangeKey, setRangeKey] = useState<RangeKey>("6h");
 
@@ -1011,7 +1022,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
           </div>
         </Card>
 
-        <PlatformIPQuotaPanel platform={platform} />
+        <PlatformIPQuotaPanel platform={platform} focusTarget={quotaFocusTarget} onManageLease={onManageLease} />
       </div>
 
       {isInitialLoading ? (

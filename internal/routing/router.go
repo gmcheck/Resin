@@ -197,10 +197,10 @@ func (r *Router) decideStickyLease(
 	}
 
 	if loaded {
-		if newLease, hitResult, ok := r.tryLeaseHit(plat, account, current, nowNs); ok {
+		if newLease, hitResult, ok := r.tryLeaseHit(plat, state, account, current, nowNs); ok {
 			return newLease, xsync.UpdateOp, hitResult, nil
 		}
-		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, account, current, targetDomain, nowNs); ok {
+		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, state, account, current, targetDomain, nowNs); ok {
 			return newLease, xsync.UpdateOp, rotatedResult, nil
 		}
 		invalidation = leaseInvalidationRemove
@@ -251,12 +251,22 @@ func (r *Router) createOrAbortStickyLease(
 
 func (r *Router) tryLeaseHit(
 	plat *platform.Platform,
+	state *PlatformRoutingState,
 	account string,
 	current Lease,
 	nowNs int64,
 ) (Lease, RouteResult, bool) {
 	entry, ok := r.pool.GetEntry(current.NodeHash)
 	if !ok || !plat.View().Contains(current.NodeHash) || entry.GetEgressIP() != current.EgressIP {
+		return Lease{}, RouteResult{}, false
+	}
+
+	// Quota admission for existing leases: keep the window entry fresh while
+	// the account is actively used, and re-admit returning accounts up to the
+	// max+1 ceiling. Beyond the ceiling the lease must be rebuilt elsewhere,
+	// otherwise a long-lived lease would let an IP serve unbounded accounts.
+	if plat.IPQuotaEnabled() &&
+		!state.IPWindow.RefreshOnHit(entry.GetEgressIP(), account, nowNs, plat.EffectiveIPAccountWindowNs(), plat.MaxAccountsPerIP) {
 		return Lease{}, RouteResult{}, false
 	}
 
@@ -278,6 +288,7 @@ func (r *Router) tryLeaseHit(
 
 func (r *Router) tryLeaseSameIPRotation(
 	plat *platform.Platform,
+	state *PlatformRoutingState,
 	account string,
 	current Lease,
 	targetDomain string,
@@ -292,6 +303,14 @@ func (r *Router) tryLeaseSameIPRotation(
 		r.p2cWindow(),
 	)
 	if !ok {
+		return Lease{}, RouteResult{}, false
+	}
+
+	// Same-IP rotation keeps the egress IP, so it must pass the same quota
+	// admission as a lease hit: without this, rotating a lease whose window
+	// entry slid out would re-expose the account on the IP without counting.
+	if plat.IPQuotaEnabled() &&
+		!state.IPWindow.RefreshOnHit(current.EgressIP, account, nowNs, plat.EffectiveIPAccountWindowNs(), plat.MaxAccountsPerIP) {
 		return Lease{}, RouteResult{}, false
 	}
 
@@ -706,10 +725,16 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 		// Seed the per-IP account window from restored leases so quota
 		// accounting survives restarts: without this, an IP with restored
 		// leases could immediately accept max fresh accounts on top.
+		// Seed with last activity time (recent-activity semantics): a lease
+		// unused for longer than the window does not occupy a slot.
 		if plat, ok := r.pool.GetPlatform(ml.PlatformID); ok && plat.IPQuotaEnabled() {
 			windowNs := plat.EffectiveIPAccountWindowNs()
-			if nowNs-ml.CreatedAtNs < windowNs {
-				state.IPWindow.Touch(ip, ml.Account, ml.CreatedAtNs)
+			lastActive := ml.LastAccessedNs
+			if lastActive <= 0 {
+				lastActive = ml.CreatedAtNs
+			}
+			if nowNs-lastActive < windowNs {
+				state.IPWindow.Touch(ip, ml.Account, lastActive)
 			}
 		}
 	}
@@ -725,10 +750,31 @@ func (r *Router) SnapshotIPQuota(platformID string, windowNs int64) *IPQuotaSnap
 	}
 	nowNs := time.Now().UnixNano()
 	blocked, fallback := state.IPWindow.Stats()
+	detailByIP := state.IPWindow.AccountsByIP(nowNs, windowNs)
+	countsByIP := make(map[netip.Addr]int, len(detailByIP))
+	for ip, accounts := range detailByIP {
+		countsByIP[ip] = len(accounts)
+	}
+	// Mark which in-window accounts currently hold a lease, so the UI can
+	// distinguish "bound" from "residual exposure" entries.
+	leased := make(map[string]struct{})
+	state.Leases.leases.Range(func(account string, lease Lease) bool {
+		leased[account] = struct{}{}
+		return true
+	})
+	for ip, accounts := range detailByIP {
+		for i := range accounts {
+			if _, ok := leased[accounts[i].Account]; ok {
+				accounts[i].HasLease = true
+			}
+		}
+		detailByIP[ip] = accounts
+	}
 	return &IPQuotaSnapshot{
 		BlockedTotal:  blocked,
 		FallbackTotal: fallback,
-		AccountsByIP:  state.IPWindow.CountsByIP(nowNs, windowNs),
+		AccountsByIP:  countsByIP,
+		DetailByIP:    detailByIP,
 	}
 }
 
@@ -740,6 +786,8 @@ type IPQuotaSnapshot struct {
 	FallbackTotal int64
 	// AccountsByIP maps egress IP to distinct in-window account count.
 	AccountsByIP map[netip.Addr]int
+	// DetailByIP maps egress IP to in-window account details for the UI.
+	DetailByIP map[netip.Addr][]IPAccountEntry
 }
 
 // RangeLeases iterates over all leases for a platform.

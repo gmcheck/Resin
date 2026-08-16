@@ -46,6 +46,7 @@ import {
 } from "./formModel";
 import { PlatformAccessPanel } from "./PlatformAccessPanel";
 import { PlatformMonitorPanel } from "./PlatformMonitorPanel";
+import type { QuotaFocusTarget } from "./PlatformIPQuotaPanel";
 import type { PlatformLease } from "./types";
 
 type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
@@ -67,6 +68,7 @@ export function PlatformDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<PlatformDetailTab>("monitor");
+  const [quotaFocusTarget, setQuotaFocusTarget] = useState<QuotaFocusTarget | null>(null);
   const [leasePage, setLeasePage] = useState(0);
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
   const [leaseSearch, setLeaseSearch] = useState("");
@@ -317,6 +319,21 @@ export function PlatformDetailPage() {
     setLeasePage(0);
   };
 
+  // Lease table → monitor tab: focus the IP quota modal for this egress IP.
+  const inspectQuotaIP = (ip: string) => {
+    // Drop ?tab=ops/#anchor so the URL effect does not force the ops tab back.
+    void navigate({ search: "", hash: "" }, { replace: true });
+    setActiveTab("monitor");
+    setQuotaFocusTarget((previous) => ({ ip, seq: (previous?.seq ?? 0) + 1 }));
+  };
+
+  // IP quota modal → lease management: switch tab, prefill the account search,
+  // and let the existing hash-scroll effect land on the lease table.
+  const manageLease = (account: string) => {
+    setLeaseSearch(account);
+    void navigate({ search: "?tab=ops", hash: LEASE_MANAGEMENT_ANCHOR });
+  };
+
   const leaseColumns: ColumnDef<PlatformLease>[] = [
     {
       accessorKey: "account",
@@ -343,7 +360,22 @@ export function PlatformDetailPage() {
     {
       accessorKey: "egress_ip",
       header: t("出口 IP"),
-      cell: ({ row }) => row.original.egress_ip || "-",
+      cell: ({ row }) => {
+        const ip = row.original.egress_ip;
+        if (!ip) {
+          return "-";
+        }
+        return (
+          <button
+            type="button"
+            className="platform-ip-quota-ip-link"
+            title={t("查看该 IP 的账号配额明细")}
+            onClick={() => inspectQuotaIP(ip)}
+          >
+            {ip}
+          </button>
+        );
+      },
     },
     {
       accessorKey: "expiry",
@@ -501,7 +533,14 @@ export function PlatformDetailPage() {
                     aria-controls={`platform-tabpanel-${tab.key}`}
                     className={`platform-detail-tab ${selected ? "platform-detail-tab-active" : ""}`}
                     title={t(tab.hint)}
-                    onClick={() => setActiveTab(tab.key)}
+                    onClick={() => {
+                      setActiveTab(tab.key);
+                      if (tab.key === "monitor") {
+                        // The monitor panel unmounts on tab switch and would
+                        // replay a consumed quota focus on remount — drop it.
+                        setQuotaFocusTarget(null);
+                      }
+                    }}
                   >
                     <span>{t(tab.label)}</span>
                   </button>
@@ -516,7 +555,7 @@ export function PlatformDetailPage() {
                 aria-labelledby="platform-tab-monitor"
                 className="platform-detail-panel"
               >
-                <PlatformMonitorPanel platform={platform} />
+                <PlatformMonitorPanel platform={platform} quotaFocusTarget={quotaFocusTarget} onManageLease={manageLease} />
               </div>
             ) : null}
 
@@ -606,6 +645,30 @@ export function PlatformDetailPage() {
                     <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
                       {t("账号数按此时长滑动窗口统计，仅在启用单 IP 限制时生效。")}
                     </p>
+                  </div>
+
+                  <div className="platform-quota-algo-hint">
+                    <div className="platform-quota-algo-title">
+                      <Info size={14} />
+                      <span>{t("限额算法与 flag2 风控线")}</span>
+                    </div>
+                    <ul>
+                      <li>
+                        {t(
+                          "算法：同一出口 IP 在账号统计窗口内最多绑定 N 个去重账号（N = 单 IP 最大账号数）；满额后新账号自动改走其他出口 IP，所有出口 IP 均满额时兜底放行至 N+1（硬上限）。",
+                        )}
+                      </li>
+                      <li>
+                        {t(
+                          "flag2 线：同一 IP 10 分钟内出现 5 个及以上不同账号即被标记降智（10min/5）。窗口 ≥ 10m 时，任意 10 分钟内的账号数 ≤ 窗口内账号数 ≤ N+1。",
+                        )}
+                      </li>
+                      <li>
+                        {t(
+                          "推荐配置：N=3、窗口=2h——即使触发兜底放行到第 4 个账号，也始终低于 5 的 flag2 标记线。",
+                        )}
+                      </li>
+                    </ul>
                   </div>
 
                   <div className="field-group">

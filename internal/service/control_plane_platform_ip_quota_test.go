@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Resinat/Resin/internal/config"
+	"github.com/Resinat/Resin/internal/model"
 	"github.com/Resinat/Resin/internal/routing"
 	"github.com/Resinat/Resin/internal/state"
 	"github.com/Resinat/Resin/internal/topology"
@@ -329,6 +330,85 @@ func TestIPQuotaContract_GetIPQuotaEndpoint(t *testing.T) {
 	}
 	if resp.IPs == nil {
 		t.Fatal("IPs must be a non-nil array for JSON contract stability")
+	}
+}
+
+func TestIPQuotaContract_GetIPQuotaAccountDetails(t *testing.T) {
+	cp := newIPQuotaTestService(t)
+
+	name := "quota-detail-platform"
+	max := 2
+	window := "2h"
+	created, err := cp.CreatePlatform(CreatePlatformRequest{
+		Name:             &name,
+		MaxAccountsPerIP: &max,
+		IPAccountWindow:  &window,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatform: %v", err)
+	}
+
+	// Bind two accounts to one egress IP through the control plane.
+	nowNs := time.Now().UnixNano()
+	upsert := func(account string) {
+		t.Helper()
+		ml := model.Lease{
+			PlatformID:  created.ID,
+			Account:     account,
+			NodeHash:    "00000000000000000000000000000000",
+			EgressIP:    "10.9.9.9",
+			CreatedAtNs: nowNs,
+			ExpiryNs:    nowNs + int64(time.Hour),
+		}
+		if err := cp.Router.UpsertLease(ml); err != nil {
+			t.Fatalf("UpsertLease %s: %v", account, err)
+		}
+	}
+	upsert("acct-a")
+	upsert("acct-b")
+
+	// Release one lease: the window entry must remain as residual exposure.
+	if !cp.Router.DeleteLease(created.ID, "acct-a") {
+		t.Fatal("DeleteLease acct-a failed")
+	}
+
+	resp, err := cp.GetIPQuota(created.ID)
+	if err != nil {
+		t.Fatalf("GetIPQuota: %v", err)
+	}
+	if len(resp.IPs) != 1 || resp.IPs[0].EgressIP != "10.9.9.9" {
+		t.Fatalf("IPs = %+v, want one entry for 10.9.9.9", resp.IPs)
+	}
+	ipEntry := resp.IPs[0]
+	if ipEntry.WindowAccounts != 2 {
+		t.Fatalf("window_accounts = %d, want 2 (residual entry still counted)", ipEntry.WindowAccounts)
+	}
+	if len(ipEntry.Accounts) != 2 {
+		t.Fatalf("accounts = %+v, want 2 details", ipEntry.Accounts)
+	}
+	if ipEntry.Accounts[0].Account != "acct-a" || ipEntry.Accounts[1].Account != "acct-b" {
+		t.Fatalf("accounts must be sorted by name, got %+v", ipEntry.Accounts)
+	}
+	byAccount := make(map[string]IPQuotaAccountEntry, len(ipEntry.Accounts))
+	for _, acc := range ipEntry.Accounts {
+		byAccount[acc.Account] = acc
+	}
+	if byAccount["acct-a"].HasLease {
+		t.Fatal("acct-a lease was deleted: has_lease must be false (residual)")
+	}
+	if !byAccount["acct-b"].HasLease {
+		t.Fatal("acct-b holds a lease: has_lease must be true")
+	}
+	for _, acc := range byAccount {
+		if acc.ViaFallback {
+			t.Fatalf("%s entered via the normal path: via_fallback must be false", acc.Account)
+		}
+		if _, err := time.Parse(time.RFC3339, acc.LastSeen); err != nil {
+			t.Fatalf("%s last_seen = %q, want RFC3339: %v", acc.Account, acc.LastSeen, err)
+		}
+		if acc.LastSeenNs <= 0 {
+			t.Fatalf("%s last_seen_ns = %d, want > 0", acc.Account, acc.LastSeenNs)
+		}
 	}
 }
 

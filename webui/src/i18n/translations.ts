@@ -388,6 +388,33 @@ Note: Once enabled, requests without authentication information are rejected ins
   "未启用": "Disabled",
   "例如 2h，默认 2h": "e.g. 2h, default 2h",
   "例如 3": "e.g. 3",
+  "限额算法与 flag2 风控线": "Quota algorithm & flag2 risk line",
+  "算法：同一出口 IP 在账号统计窗口内最多绑定 N 个去重账号（N = 单 IP 最大账号数）；满额后新账号自动改走其他出口 IP，所有出口 IP 均满额时兜底放行至 N+1（硬上限）。":
+    "Algorithm: each egress IP binds at most N distinct accounts within the counting window (N = max accounts per IP); once an IP is full, new accounts are routed to other egress IPs, and when every egress IP is full, a fail-open slot up to N+1 (hard ceiling) is granted.",
+  "flag2 线：同一 IP 10 分钟内出现 5 个及以上不同账号即被标记降智（10min/5）。窗口 ≥ 10m 时，任意 10 分钟内的账号数 ≤ 窗口内账号数 ≤ N+1。":
+    "flag2 line: an IP seen with 5 or more distinct accounts within 10 minutes gets flagged (10min/5). When the window is ≥ 10m, distinct accounts in any 10 minutes ≤ in-window accounts ≤ N+1.",
+  "推荐配置：N=3、窗口=2h——即使触发兜底放行到第 4 个账号，也始终低于 5 的 flag2 标记线。":
+    "Recommended: N=3, window=2h — even with the fail-open 4th account, you always stay below the flag2 line of 5.",
+  "各出口 IP 在统计窗口内的去重账号数，点击 IP 查看绑定账号":
+    "Distinct accounts per egress IP within the counting window; click an IP to view its bound accounts",
+  "查看该 IP 绑定的账号": "View accounts bound to this IP",
+  "出口 IP 账号明细": "Egress IP account details",
+  "窗口内账号 {{count}} / {{max}} · 统计窗口 {{window}}": "In-window accounts {{count}} / {{max}} · window {{window}}",
+  "最后活跃": "Last active",
+  "使用中": "In use",
+  "窗口残留": "Residual",
+  "兜底超额": "Fail-open",
+  "账号当前租约绑定该出口 IP": "The account currently holds a sticky lease on this egress IP",
+  "账号已不再使用该 IP，名额将在滑出统计窗口后释放":
+    "The account no longer uses this IP; its slot is released once the entry slides out of the window",
+  "所有出口 IP 均满额时兜底放行，占用 N+1 硬上限槽位":
+    "Admitted via fail-open when every egress IP is full, occupying the N+1 hard-ceiling slot",
+  "该 IP 在统计窗口内暂无账号记录": "No in-window account records for this IP",
+  "使用中：账号租约当前绑定该 IP；窗口残留：账号已无租约，最长再暴露一个统计窗口后释放名额；兜底超额：占用 fail-open 的 N+1 槽位。":
+    "In use: the account's lease currently binds to this IP; Residual: the lease is gone and the entry is exposed for at most one more window before releasing the slot; Fail-open: occupies the N+1 fail-open slot.",
+  "租约": "Lease",
+  "跳转到租约管理并搜索该账号": "Open lease management filtered to this account",
+  "查看该 IP 的账号配额明细": "View the account quota details for this IP",
   "节点名正则过滤规则": "Node name regex filters",
   "节点名正则过滤规则（可选）": "Node name regex filters (optional)",
   "地区过滤规则": "Region filters",

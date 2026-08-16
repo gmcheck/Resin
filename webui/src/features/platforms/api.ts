@@ -176,14 +176,24 @@ export async function clearAllPlatformLeases(id: string): Promise<void> {
 }
 
 // IPQuotaWireResponse mirrors the backend JSON shape of the ip-quota endpoint
-// (egress_ip / window_accounts inside ips entries).
+// (egress_ip / window_accounts / accounts inside ips entries).
 type IPQuotaWireResponse = {
   enabled?: boolean;
   max_accounts_per_ip?: number;
   ip_account_window?: string;
   ip_quota_blocked_total?: number;
   ip_quota_fallback_total?: number;
-  ips?: Array<{ egress_ip?: string; window_accounts?: number } | null> | null;
+  ips?: Array<{
+    egress_ip?: string;
+    window_accounts?: number;
+    accounts?: Array<{
+      account?: string;
+      last_seen?: string;
+      last_seen_ns?: number;
+      via_fallback?: boolean;
+      has_lease?: boolean;
+    } | null> | null;
+  } | null> | null;
 };
 
 export async function getPlatformIPQuota(id: string): Promise<PlatformIPQuotaSnapshot> {
@@ -200,6 +210,17 @@ export async function getPlatformIPQuota(id: string): Promise<PlatformIPQuotaSna
           .map((item) => ({
             ip: typeof item?.egress_ip === "string" ? item.egress_ip : "",
             accounts: typeof item?.window_accounts === "number" ? item.window_accounts : 0,
+            account_details: Array.isArray(item?.accounts)
+              ? item.accounts
+                  .map((detail) => ({
+                    account: typeof detail?.account === "string" ? detail.account : "",
+                    last_seen: typeof detail?.last_seen === "string" ? detail.last_seen : "",
+                    last_seen_ns: typeof detail?.last_seen_ns === "number" ? detail.last_seen_ns : 0,
+                    via_fallback: detail?.via_fallback === true,
+                    has_lease: detail?.has_lease === true,
+                  }))
+                  .filter((detail) => detail.account !== "")
+              : [],
           }))
           .filter((item) => item.ip !== "")
       : [],

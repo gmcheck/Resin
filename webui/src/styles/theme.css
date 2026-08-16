@@ -2838,6 +2838,139 @@ a {
   font-size: 11px;
 }
 
+.platform-ip-quota-ip-link {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--mono-font, monospace);
+  font-size: 12.5px;
+  color: #1f4e9c;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.platform-ip-quota-ip-link:hover,
+.platform-ip-quota-ip-link:focus-visible {
+  text-decoration: underline;
+}
+
+.platform-ip-accounts-modal {
+  width: min(640px, 100%);
+}
+
+.platform-ip-accounts-table {
+  margin-top: 12px;
+  border: 1px solid rgba(37, 72, 120, 0.14);
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.platform-ip-accounts-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 0.9fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: #1d3f70;
+  border-bottom: 1px solid rgba(37, 72, 120, 0.08);
+}
+
+.platform-ip-accounts-row:last-of-type {
+  border-bottom: none;
+}
+
+.platform-ip-accounts-row-head {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: rgba(31, 78, 141, 0.05);
+}
+
+.platform-ip-accounts-account {
+  font-family: var(--mono-font, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.platform-ip-accounts-manage {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid rgba(31, 78, 141, 0.22);
+  border-radius: 999px;
+  background: rgba(31, 78, 141, 0.06);
+  font-family: var(--base-font, inherit);
+  font-size: 11px;
+  color: #1f4e9c;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.platform-ip-accounts-manage:hover,
+.platform-ip-accounts-manage:focus-visible {
+  background: rgba(31, 78, 141, 0.14);
+  text-decoration: none;
+}
+
+.platform-ip-accounts-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.platform-ip-accounts-empty {
+  padding: 10px 12px;
+}
+
+.platform-ip-accounts-legend {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.platform-quota-algo-hint {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(31, 78, 141, 0.16);
+  border-radius: 11px;
+  background: rgba(31, 78, 141, 0.05);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #1d3f70;
+}
+
+.platform-quota-algo-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d3f70;
+  margin-bottom: 4px;
+}
+
+.platform-quota-algo-hint ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .platform-ops-list {
   --platform-op-btn-width: 164px;
   display: flex;

@@ -270,3 +270,88 @@ func TestIPQuota_DeletedLeaseStillCountsInWindow(t *testing.T) {
 		t.Fatalf("window accounts = %d, want 3 (a still counted)", got)
 	}
 }
+
+func TestIPQuota_AccountRotationScheduling(t *testing.T) {
+	// Covers upstream account scheduling (e.g. grok2api rotating accounts on
+	// the same IP): an actively rotated account never loses its slot, while a
+	// lease whose entry slid out re-enters below max as a regular slot, then up
+	// to max+1 via fallback; beyond the ceiling the request fails closed.
+	window := 250 * time.Millisecond
+	router := setupQuotaRouter(t, 2, window, 1)
+
+	// a and b occupy both slots and hold sticky leases.
+	for _, acc := range []string{"a", "b"} {
+		if _, err := router.RouteRequest(platName, acc, "example.com"); err != nil {
+			t.Fatalf("%s: %v", acc, err)
+		}
+	}
+
+	// Keep a active across several window boundaries: every hit must refresh
+	// its entry, so a never slides out. b goes idle and slides out.
+	deadline := time.Now().Add(3 * window)
+	for time.Now().Before(deadline) {
+		res, err := router.RouteRequest(platName, "a", "example.com")
+		if err != nil {
+			t.Fatalf("a active rotation: %v", err)
+		}
+		if res.LeaseCreated || res.EgressIP != mustAddr("10.0.0.1") {
+			t.Fatalf("a should keep hitting its lease on 10.0.0.1, got created=%v ip=%v", res.LeaseCreated, res.EgressIP)
+		}
+		time.Sleep(window / 3)
+	}
+
+	// Fresh account c fills the free slot (b's old slot) on the normal path.
+	if _, err := router.RouteRequest(platName, "c", "example.com"); err != nil {
+		t.Fatalf("c: %v", err)
+	}
+
+	// b returns while its lease is still alive but its entry slid out: it must
+	// be re-admitted through the fallback slot (max+1), keeping its lease.
+	resB, err := router.RouteRequest(platName, "b", "example.com")
+	if err != nil {
+		t.Fatalf("b returning: %v", err)
+	}
+	if resB.LeaseCreated || resB.EgressIP != mustAddr("10.0.0.1") {
+		t.Fatalf("b should hit its existing lease, got created=%v ip=%v", resB.LeaseCreated, resB.EgressIP)
+	}
+
+	// d has no lease and the ceiling is reached: fail closed.
+	if _, err := router.RouteRequest(platName, "d", "example.com"); !errors.Is(err, routing.ErrNoAvailableNodes) {
+		t.Fatalf("d: err = %v, want ErrNoAvailableNodes", err)
+	}
+
+	snap := router.SnapshotIPQuota(platID, int64(window))
+	if snap.FallbackTotal < 1 {
+		t.Fatalf("fallbackTotal = %d, want >= 1", snap.FallbackTotal)
+	}
+	details := snap.DetailByIP[mustAddr("10.0.0.1")]
+	if len(details) != 3 {
+		t.Fatalf("window details = %v, want 3 entries (a, b, c)", details)
+	}
+	byAccount := make(map[string]routing.IPAccountEntry, len(details))
+	for _, d := range details {
+		byAccount[d.Account] = d
+	}
+	if !byAccount["b"].ViaFallback || byAccount["a"].ViaFallback || byAccount["c"].ViaFallback {
+		t.Fatalf("viaFallback flags = %v, want only b fallback", byAccount)
+	}
+	for _, acc := range []string{"a", "b", "c"} {
+		if !byAccount[acc].HasLease {
+			t.Fatalf("account %s should hold a lease", acc)
+		}
+	}
+
+	// Deleting c's lease leaves a residual window entry without a lease.
+	if !router.DeleteLease(platID, "c") {
+		t.Fatal("delete lease c failed")
+	}
+	snap = router.SnapshotIPQuota(platID, int64(window))
+	if got := snap.AccountsByIP[mustAddr("10.0.0.1")]; got != 3 {
+		t.Fatalf("window accounts after delete = %d, want 3 (c residual)", got)
+	}
+	for _, d := range snap.DetailByIP[mustAddr("10.0.0.1")] {
+		if d.Account == "c" && d.HasLease {
+			t.Fatal("c must be a residual entry (has_lease=false) after lease deletion")
+		}
+	}
+}

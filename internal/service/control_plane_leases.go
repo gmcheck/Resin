@@ -170,10 +170,20 @@ func (s *ControlPlaneService) GetIPLoad(platformID string) ([]IPLoadEntry, error
 	return result, nil
 }
 
+// IPQuotaAccountEntry describes one in-window account on an egress IP.
+type IPQuotaAccountEntry struct {
+	Account     string `json:"account"`
+	LastSeen    string `json:"last_seen"`
+	LastSeenNs  int64  `json:"last_seen_ns"`
+	ViaFallback bool   `json:"via_fallback"`
+	HasLease    bool   `json:"has_lease"`
+}
+
 // IPQuotaIPEntry is the per-IP section of the IP quota response.
 type IPQuotaIPEntry struct {
-	EgressIP       string `json:"egress_ip"`
-	WindowAccounts int    `json:"window_accounts"`
+	EgressIP       string                `json:"egress_ip"`
+	WindowAccounts int                   `json:"window_accounts"`
+	Accounts       []IPQuotaAccountEntry `json:"accounts"`
 }
 
 // IPQuotaResponse is the API response for per-IP account quota state.
@@ -202,10 +212,21 @@ func (s *ControlPlaneService) GetIPQuota(platformID string) (*IPQuotaResponse, e
 		resp.BlockedTotal = snap.BlockedTotal
 		resp.FallbackTotal = snap.FallbackTotal
 		for ip, accounts := range snap.AccountsByIP {
-			resp.IPs = append(resp.IPs, IPQuotaIPEntry{
+			entry := IPQuotaIPEntry{
 				EgressIP:       ip.String(),
 				WindowAccounts: accounts,
-			})
+				Accounts:       []IPQuotaAccountEntry{},
+			}
+			for _, detail := range snap.DetailByIP[ip] {
+				entry.Accounts = append(entry.Accounts, IPQuotaAccountEntry{
+					Account:     detail.Account,
+					LastSeen:    time.Unix(0, detail.LastSeenNs).UTC().Format(time.RFC3339),
+					LastSeenNs:  detail.LastSeenNs,
+					ViaFallback: detail.ViaFallback,
+					HasLease:    detail.HasLease,
+				})
+			}
+			resp.IPs = append(resp.IPs, entry)
 		}
 	}
 	return resp, nil

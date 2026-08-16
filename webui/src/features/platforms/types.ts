@@ -76,9 +76,18 @@ export type ListPlatformLeasesInput = {
   sort_order?: SortOrder;
 };
 
+export type PlatformIPQuotaAccountDetail = {
+  account: string;
+  last_seen: string;
+  last_seen_ns: number;
+  via_fallback: boolean;
+  has_lease: boolean;
+};
+
 export type PlatformIPQuotaIPEntry = {
   ip: string;
   accounts: number;
+  account_details: PlatformIPQuotaAccountDetail[];
 };
 
 export type PlatformIPQuotaSnapshot = {
