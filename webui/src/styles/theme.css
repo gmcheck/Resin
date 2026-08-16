@@ -1761,6 +1761,11 @@ a {
   font-size: 12px;
 }
 
+.field-help {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .detail-actions {
   grid-column: 1 / -1;
   display: flex;

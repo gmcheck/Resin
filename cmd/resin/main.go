@@ -362,6 +362,7 @@ func bootstrapTopology(
 		sub := subscription.NewSubscription(ms.ID, ms.Name, ms.URL, ms.Enabled, ms.Ephemeral)
 		sub.SetFetchConfig(ms.URL, ms.UpdateIntervalNs)
 		sub.SetSourceType(ms.SourceType)
+		sub.SetUserAgent(ms.UserAgent)
 		sub.SetContent(ms.Content)
 		sub.SetIncrementalAliveNodes(ms.IncrementalAliveNodes)
 		sub.SetEphemeralNodeEvictDelayNs(ms.EphemeralNodeEvictDelayNs)

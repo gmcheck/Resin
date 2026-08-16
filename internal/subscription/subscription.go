@@ -119,7 +119,10 @@ type Subscription struct {
 	mu         sync.RWMutex
 	url        string
 	sourceType string
-	content    string
+	// userAgent is the per-subscription download User-Agent override.
+	// Empty string means "use the process-wide default User-Agent".
+	userAgent string
+	content   string
 	// updateIntervalNs is the configured subscription refresh interval.
 	updateIntervalNs      int64
 	name                  string
@@ -207,6 +210,23 @@ func (s *Subscription) SourceType() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return normalizeSourceType(s.sourceType)
+}
+
+// UserAgent returns the per-subscription download User-Agent override.
+// Empty string means "use the process-wide default User-Agent" (thread-safe).
+func (s *Subscription) UserAgent() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.userAgent
+}
+
+// SetUserAgent updates the per-subscription download User-Agent override
+// (thread-safe). No configVersion bump: the User-Agent only affects the HTTP
+// request header, not the parse inputs tracked by the stale-attempt guard.
+func (s *Subscription) SetUserAgent(v string) {
+	s.mu.Lock()
+	s.userAgent = v
+	s.mu.Unlock()
 }
 
 // Content returns the local subscription content (thread-safe).

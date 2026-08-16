@@ -23,9 +23,10 @@ type SubscriptionScheduler struct {
 	downloadCtx    context.Context
 	cancelDownload context.CancelFunc
 
-	// Fetcher fetches subscription data from a URL.
+	// Fetcher fetches subscription data from a URL with an optional
+	// per-subscription User-Agent override (empty string = default UA).
 	// Defaults to downloader.Download; injectable for testing.
-	Fetcher func(url string) ([]byte, error)
+	Fetcher func(url string, userAgent string) ([]byte, error)
 
 	// For persistence.
 	onSubUpdated func(sub *subscription.Subscription)
@@ -42,7 +43,7 @@ type SchedulerConfig struct {
 	SubManager   *SubscriptionManager
 	Pool         *GlobalNodePool
 	Downloader   netutil.Downloader               // shared downloader
-	Fetcher      func(url string) ([]byte, error) // optional, defaults to Downloader.Download
+	Fetcher      func(url string, userAgent string) ([]byte, error) // optional, defaults to Downloader.Download
 	OnSubUpdated func(sub *subscription.Subscription)
 	// OnSubReenabledNode is fired after false->true enabled transition.
 	OnSubReenabledNode func(hash node.Hash)
@@ -195,6 +196,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	attemptSeq := sub.NextAttemptSeq()
 	attemptURL := sub.URL()
 	attemptSourceType := sub.SourceType()
+	attemptUserAgent := sub.UserAgent()
 	attemptContent := sub.Content()
 	attemptConfigVersion := sub.ConfigVersion()
 
@@ -206,7 +208,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	if attemptSourceType == subscription.SourceTypeLocal {
 		body = []byte(attemptContent)
 	} else {
-		body, err = s.Fetcher(attemptURL)
+		body, err = s.Fetcher(attemptURL, attemptUserAgent)
 		if err != nil {
 			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "fetch", err)
 			return
@@ -447,6 +449,11 @@ func (s *SubscriptionScheduler) RenameSubscription(sub *subscription.Subscriptio
 	})
 }
 
-func (s *SubscriptionScheduler) fetchViaDownloader(url string) ([]byte, error) {
+func (s *SubscriptionScheduler) fetchViaDownloader(url string, userAgent string) ([]byte, error) {
+	if userAgent != "" {
+		if uaDownloader, ok := s.downloader.(netutil.UserAgentDownloader); ok && uaDownloader != nil {
+			return uaDownloader.DownloadWithUserAgent(s.downloadCtx, url, userAgent)
+		}
+	}
 	return s.downloader.Download(s.downloadCtx, url)
 }

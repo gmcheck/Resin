@@ -109,3 +109,34 @@ func TestDirectDownloader_DynamicUserAgentPulled(t *testing.T) {
 		t.Fatalf("expected second UA agent-b, got %q", string(body))
 	}
 }
+
+func TestDirectDownloader_PerRequestUserAgent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("User-Agent")))
+	}))
+	defer srv.Close()
+
+	const defaultUA = "default-agent"
+	d := NewDirectDownloader(
+		func() time.Duration { return 0 },
+		func() string { return defaultUA },
+	)
+
+	// Explicit per-request UA overrides the default.
+	body, err := d.DownloadWithUserAgent(context.Background(), srv.URL, "per-sub-agent")
+	if err != nil {
+		t.Fatalf("download with per-request UA failed: %v", err)
+	}
+	if string(body) != "per-sub-agent" {
+		t.Fatalf("expected per-request UA override, got %q", string(body))
+	}
+
+	// Empty per-request UA falls back to UserAgentFn.
+	body, err = d.DownloadWithUserAgent(context.Background(), srv.URL, "")
+	if err != nil {
+		t.Fatalf("download with empty per-request UA failed: %v", err)
+	}
+	if string(body) != defaultUA {
+		t.Fatalf("expected fallback to default UA, got %q", string(body))
+	}
+}

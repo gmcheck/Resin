@@ -21,11 +21,30 @@ type RetryDownloader struct {
 
 // Download attempts direct download first, then falls back to proxy retries.
 func (r *RetryDownloader) Download(ctx context.Context, url string) ([]byte, error) {
+	return r.download(ctx, url, func(ctx context.Context) ([]byte, error) {
+		return r.Direct.Download(ctx, url)
+	})
+}
+
+// DownloadWithUserAgent attempts direct download with a per-request
+// User-Agent override, then falls back to proxy retries (proxy attempts use
+// their own outbound User-Agent). If Direct does not implement
+// UserAgentDownloader, it degrades to a plain Download.
+func (r *RetryDownloader) DownloadWithUserAgent(ctx context.Context, url string, userAgent string) ([]byte, error) {
+	return r.download(ctx, url, func(ctx context.Context) ([]byte, error) {
+		if direct, ok := r.Direct.(UserAgentDownloader); ok && direct != nil {
+			return direct.DownloadWithUserAgent(ctx, url, userAgent)
+		}
+		return r.Direct.Download(ctx, url)
+	})
+}
+
+func (r *RetryDownloader) download(ctx context.Context, url string, directFetch func(context.Context) ([]byte, error)) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	body, err := r.Direct.Download(ctx, url)
+	body, err := directFetch(ctx)
 	if err == nil {
 		return body, nil
 	}

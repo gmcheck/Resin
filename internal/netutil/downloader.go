@@ -39,6 +39,12 @@ type Downloader interface {
 	Download(ctx context.Context, url string) ([]byte, error)
 }
 
+// UserAgentDownloader is an optional Downloader extension that allows
+// per-request User-Agent overrides (e.g. subscription-level UA config).
+type UserAgentDownloader interface {
+	DownloadWithUserAgent(ctx context.Context, url, userAgent string) ([]byte, error)
+}
+
 // DirectDownloader downloads via a standard HTTP client (no proxy).
 type DirectDownloader struct {
 	Client      *http.Client
@@ -64,6 +70,12 @@ func NewDirectDownloader(timeoutFn func() time.Duration, userAgentFn func() stri
 
 // Download fetches the URL and returns the response body.
 func (d *DirectDownloader) Download(ctx context.Context, url string) ([]byte, error) {
+	return d.DownloadWithUserAgent(ctx, url, "")
+}
+
+// DownloadWithUserAgent fetches the URL using the given User-Agent for the
+// request. An empty userAgent falls back to the downloader's UserAgentFn.
+func (d *DirectDownloader) DownloadWithUserAgent(ctx context.Context, url string, userAgent string) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -78,7 +90,9 @@ func (d *DirectDownloader) Download(ctx context.Context, url string) ([]byte, er
 	if err != nil {
 		return nil, &NonRetryableError{Err: err}
 	}
-	userAgent := d.currentUserAgent()
+	if userAgent == "" {
+		userAgent = d.currentUserAgent()
+	}
 	if userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}

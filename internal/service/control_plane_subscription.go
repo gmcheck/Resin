@@ -26,6 +26,7 @@ type SubscriptionResponse struct {
 	Name                    string `json:"name"`
 	SourceType              string `json:"source_type"`
 	URL                     string `json:"url"`
+	UserAgent               string `json:"user_agent"`
 	Content                 string `json:"content"`
 	UpdateInterval          string `json:"update_interval"`
 	NodeCount               int    `json:"node_count"`
@@ -68,6 +69,7 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 		Name:                    sub.Name(),
 		SourceType:              sub.SourceType(),
 		URL:                     sub.URL(),
+		UserAgent:               sub.UserAgent(),
 		Content:                 sub.Content(),
 		UpdateInterval:          time.Duration(sub.UpdateIntervalNs()).String(),
 		NodeCount:               nodeCount,
@@ -119,6 +121,7 @@ type CreateSubscriptionRequest struct {
 	Name                    *string `json:"name"`
 	SourceType              *string `json:"source_type"`
 	URL                     *string `json:"url"`
+	UserAgent               *string `json:"user_agent"`
 	Content                 *string `json:"content"`
 	UpdateInterval          *string `json:"update_interval"`
 	Enabled                 *bool   `json:"enabled"`
@@ -217,6 +220,12 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		ephemeralNodeEvictDelay = d
 	}
 
+	// Empty user_agent means "use the process-wide default User-Agent".
+	userAgent := ""
+	if req.UserAgent != nil {
+		userAgent = strings.TrimSpace(*req.UserAgent)
+	}
+
 	id := uuid.New().String()
 	now := time.Now().UnixNano()
 
@@ -225,6 +234,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		Name:                      name,
 		SourceType:                sourceType,
 		URL:                       subURL,
+		UserAgent:                 userAgent,
 		Content:                   content,
 		UpdateIntervalNs:          int64(updateInterval),
 		Enabled:                   enabled,
@@ -241,6 +251,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 	sub := subscription.NewSubscription(id, name, subURL, enabled, ephemeral)
 	sub.SetFetchConfig(subURL, int64(updateInterval))
 	sub.SetSourceType(sourceType)
+	sub.SetUserAgent(userAgent)
 	sub.SetContent(content)
 	sub.SetIncrementalAliveNodes(incrementalAliveNodes)
 	sub.SetEphemeralNodeEvictDelayNs(int64(ephemeralNodeEvictDelay))
@@ -276,6 +287,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	enabledChanged := false
 	urlChanged := false
 	contentChanged := false
+	userAgentChanged := false
 	sourceType := sub.SourceType()
 
 	newName := sub.Name()
@@ -317,6 +329,17 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		newContent = contentStr
 		if newContent != sub.Content() {
 			contentChanged = true
+		}
+	}
+
+	// Empty user_agent means "use the process-wide default User-Agent".
+	newUserAgent := sub.UserAgent()
+	if userAgentStr, ok, err := patch.optionalString("user_agent"); err != nil {
+		return nil, err
+	} else if ok {
+		newUserAgent = strings.TrimSpace(userAgentStr)
+		if newUserAgent != sub.UserAgent() {
+			userAgentChanged = true
 		}
 	}
 
@@ -370,6 +393,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		Name:                      newName,
 		SourceType:                sourceType,
 		URL:                       newURL,
+		UserAgent:                 newUserAgent,
 		Content:                   newContent,
 		UpdateIntervalNs:          newInterval,
 		Enabled:                   newEnabled,
@@ -386,6 +410,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	// Apply side-effects via scheduler.
 	sub.SetFetchConfig(newURL, newInterval)
 	sub.SetContent(newContent)
+	sub.SetUserAgent(newUserAgent)
 	sub.SetEphemeral(newEphemeral)
 	sub.SetIncrementalAliveNodes(newIncrementalAliveNodes)
 	sub.SetEphemeralNodeEvictDelayNs(newEphemeralNodeEvictDelay)
@@ -397,7 +422,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	if enabledChanged {
 		s.Scheduler.SetSubscriptionEnabled(sub, newEnabled)
 	}
-	if urlChanged || contentChanged {
+	if urlChanged || contentChanged || userAgentChanged {
 		go s.Scheduler.UpdateSubscription(sub)
 	}
 

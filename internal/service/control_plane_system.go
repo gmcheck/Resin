@@ -108,6 +108,7 @@ var platformPatchAllowedFields = map[string]bool{
 var subscriptionPatchAllowedFields = map[string]bool{
 	"name":                       true,
 	"url":                        true,
+	"user_agent":                 true,
 	"content":                    true,
 	"update_interval":            true,
 	"enabled":                    true,

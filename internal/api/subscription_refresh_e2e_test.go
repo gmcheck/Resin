@@ -183,3 +183,79 @@ func TestAPIContract_SubscriptionRefreshAction_E2ELocalSource(t *testing.T) {
 		t.Fatalf("local subscription last_error: got %q, want empty", got)
 	}
 }
+
+// TestAPIContract_SubscriptionUserAgent_E2E verifies the user_agent field is
+// persisted, returned by the API, and used as the HTTP User-Agent when the
+// subscription is refreshed (overriding the downloader-wide default UA).
+func TestAPIContract_SubscriptionUserAgent_E2E(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+
+	const rawOutbound = `{"type":"shadowsocks","tag":"edge-ua","server":"1.1.1.1","server_port":443,"method":"aes-256-gcm","password":"secret"}`
+	subPayload := `{"outbounds":[` + rawOutbound + `]}`
+
+	const (
+		defaultUA = "resin-default-ua"
+		firstUA   = "resin-sub-ua-1"
+		secondUA  = "resin-sub-ua-2"
+	)
+	var receivedUA atomic.Value
+	subscriptionSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUA.Store(r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte(subPayload))
+	}))
+	defer subscriptionSource.Close()
+
+	cp.Scheduler = topology.NewSubscriptionScheduler(topology.SchedulerConfig{
+		SubManager: cp.SubMgr,
+		Pool:       cp.Pool,
+		Downloader: netutil.NewDirectDownloader(
+			func() time.Duration { return 2 * time.Second },
+			func() string { return defaultUA },
+		),
+	})
+
+	createRec := doJSONRequest(t, srv, http.MethodPost, "/api/v1/subscriptions", map[string]any{
+		"name":       "sub-ua-e2e",
+		"url":        subscriptionSource.URL + "/sub",
+		"user_agent": firstUA,
+	}, true)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create subscription status: got %d, want %d, body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
+	}
+	createBody := decodeJSONMap(t, createRec)
+	subID, _ := createBody["id"].(string)
+	if subID == "" {
+		t.Fatalf("create subscription missing id: body=%s", createRec.Body.String())
+	}
+	if got, _ := createBody["user_agent"].(string); got != firstUA {
+		t.Fatalf("create subscription user_agent: got %q, want %q", got, firstUA)
+	}
+
+	refreshRec := doJSONRequest(t, srv, http.MethodPost, "/api/v1/subscriptions/"+subID+"/actions/refresh", nil, true)
+	if refreshRec.Code != http.StatusOK {
+		t.Fatalf("refresh subscription status: got %d, want %d, body=%s", refreshRec.Code, http.StatusOK, refreshRec.Body.String())
+	}
+	if got, _ := receivedUA.Load().(string); got != firstUA {
+		t.Fatalf("first refresh user-agent: got %q, want %q", got, firstUA)
+	}
+
+	// Patch the user_agent and verify the new value is returned and used.
+	patchRec := doJSONRequest(t, srv, http.MethodPatch, "/api/v1/subscriptions/"+subID, map[string]any{
+		"user_agent": secondUA,
+	}, true)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch subscription status: got %d, want %d, body=%s", patchRec.Code, http.StatusOK, patchRec.Body.String())
+	}
+	patchBody := decodeJSONMap(t, patchRec)
+	if got, _ := patchBody["user_agent"].(string); got != secondUA {
+		t.Fatalf("patch subscription user_agent: got %q, want %q", got, secondUA)
+	}
+
+	refresh2Rec := doJSONRequest(t, srv, http.MethodPost, "/api/v1/subscriptions/"+subID+"/actions/refresh", nil, true)
+	if refresh2Rec.Code != http.StatusOK {
+		t.Fatalf("second refresh subscription status: got %d, want %d, body=%s", refresh2Rec.Code, http.StatusOK, refresh2Rec.Body.String())
+	}
+	if got, _ := receivedUA.Load().(string); got != secondUA {
+		t.Fatalf("second refresh user-agent: got %q, want %q", got, secondUA)
+	}
+}

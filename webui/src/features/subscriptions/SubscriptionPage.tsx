@@ -47,6 +47,7 @@ const subscriptionCreateSchema = z.object({
   source_type: z.enum(["remote", "local"]),
   url: z.string(),
   content: z.string(),
+  user_agent: z.string(),
   update_interval: z.string().trim().min(1, "更新间隔不能为空"),
   ephemeral_node_evict_delay: z.string().trim().min(1, "临时节点驱逐延迟不能为空"),
   enabled: z.boolean(),
@@ -95,6 +96,7 @@ function subscriptionToEditForm(subscription: Subscription): SubscriptionEditFor
     source_type: subscription.source_type,
     url: subscription.url,
     content: subscription.content ?? "",
+    user_agent: subscription.user_agent ?? "",
     update_interval: subscription.update_interval,
     ephemeral_node_evict_delay: subscription.ephemeral_node_evict_delay,
     enabled: subscription.enabled,
@@ -188,6 +190,7 @@ export function SubscriptionPage() {
       source_type: "remote",
       url: "",
       content: "",
+      user_agent: "",
       update_interval: "12h",
       ephemeral_node_evict_delay: "72h",
       enabled: true,
@@ -206,6 +209,7 @@ export function SubscriptionPage() {
       source_type: "remote",
       url: "",
       content: "",
+      user_agent: "",
       update_interval: "12h",
       ephemeral_node_evict_delay: "72h",
       enabled: true,
@@ -261,6 +265,7 @@ export function SubscriptionPage() {
         source_type: "remote",
         url: "",
         content: "",
+        user_agent: "",
         update_interval: LOCAL_SOURCE_UPDATE_INTERVAL,
         ephemeral_node_evict_delay: "72h",
         enabled: true,
@@ -288,7 +293,7 @@ export function SubscriptionPage() {
         ephemeral: formData.ephemeral,
         incremental_alive_nodes: formData.incremental_alive_nodes,
         ...(formData.source_type === "remote"
-          ? { url: formData.url.trim() }
+          ? { url: formData.url.trim(), user_agent: formData.user_agent.trim() }
           : { content: formData.content }),
       };
       return updateSubscription(selectedSubscription.id, payload);
@@ -438,7 +443,7 @@ export function SubscriptionPage() {
       ephemeral: values.ephemeral,
       incremental_alive_nodes: values.incremental_alive_nodes,
       ...(values.source_type === "remote"
-        ? { url: values.url.trim() }
+        ? { url: values.url.trim(), user_agent: values.user_agent.trim() }
         : { content: values.content }),
     };
     await createMutation.mutateAsync(payload);
@@ -795,6 +800,12 @@ export function SubscriptionPage() {
                     <span>{t("上次更新")}</span>
                     <p>{formatDateTime(selectedSubscription.last_updated || "")}</p>
                   </div>
+                  {selectedSubscription.source_type === "remote" && selectedSubscription.user_agent ? (
+                    <div>
+                      <span>{t("自定义 User-Agent")}</span>
+                      <p title={selectedSubscription.user_agent}>{selectedSubscription.user_agent}</p>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedSubscription.last_error ? (
@@ -872,6 +883,18 @@ export function SubscriptionPage() {
                         {editForm.formState.errors.url?.message ? (
                           <p className="field-error">{t(editForm.formState.errors.url.message)}</p>
                         ) : null}
+                      </div>
+
+                      <div className="field-group field-span-2">
+                        <label className="field-label" htmlFor="edit-sub-user-agent">
+                          {t("自定义 User-Agent")}
+                        </label>
+                        <Input
+                          id="edit-sub-user-agent"
+                          placeholder="clash-verge/v2.5.2"
+                          {...editForm.register("user_agent")}
+                        />
+                        <p className="field-help">{t("留空使用默认 clash.meta。部分订阅服务按客户端 UA 分发不同内容")}</p>
                       </div>
                     </>
                   ) : (
@@ -1103,6 +1126,18 @@ export function SubscriptionPage() {
                     {createForm.formState.errors.url?.message ? (
                       <p className="field-error">{t(createForm.formState.errors.url.message)}</p>
                     ) : null}
+                  </div>
+
+                  <div className="field-group field-span-2">
+                    <label className="field-label" htmlFor="create-sub-user-agent">
+                      {t("自定义 User-Agent")}
+                    </label>
+                    <Input
+                      id="create-sub-user-agent"
+                      placeholder="clash-verge/v2.5.2"
+                      {...createForm.register("user_agent")}
+                    />
+                    <p className="field-help">{t("留空使用默认 clash.meta。部分订阅服务按客户端 UA 分发不同内容")}</p>
                   </div>
                 </>
               ) : (

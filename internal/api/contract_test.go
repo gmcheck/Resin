@@ -72,7 +72,7 @@ func newControlPlaneTestServerWithBodyLimit(
 	scheduler := topology.NewSubscriptionScheduler(topology.SchedulerConfig{
 		SubManager: subMgr,
 		Pool:       pool,
-		Fetcher: func(string) ([]byte, error) {
+		Fetcher: func(string, string) ([]byte, error) {
 			return nil, errors.New("test fetcher failure")
 		},
 	})
