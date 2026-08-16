@@ -2894,13 +2894,18 @@ a {
 
 .platform-ip-accounts-account {
   font-family: var(--mono-font, monospace);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.platform-ip-accounts-account-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .platform-ip-accounts-manage {

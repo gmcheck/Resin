@@ -119,8 +119,10 @@ function IPAccountsModal({
           </div>
           {details.map((detail) => (
             <div key={detail.account} className="platform-ip-accounts-row">
-              <span className="platform-ip-accounts-account" title={detail.account}>
-                {detail.account}
+              <span className="platform-ip-accounts-account">
+                <span className="platform-ip-accounts-account-name" title={detail.account}>
+                  {detail.account}
+                </span>
                 {detail.has_lease && onManageLease ? (
                   <button
                     type="button"
