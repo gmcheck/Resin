@@ -694,6 +694,31 @@ func TestAPIContract_PlatformListIncludesRoutableNodeCount(t *testing.T) {
 	if item["routable_node_count"] != float64(1) {
 		t.Fatalf("routable_node_count: got %v, want %v", item["routable_node_count"], 1)
 	}
+	if item["lease_count"] != float64(0) {
+		t.Fatalf("lease_count before lease: got %v, want %v", item["lease_count"], 0)
+	}
+
+	now := time.Now()
+	cp.Router.RestoreLeases([]model.Lease{{
+		PlatformID:     platformID,
+		Account:        "lease-count-account",
+		NodeHash:       hash.Hex(),
+		EgressIP:       "203.0.113.10",
+		CreatedAtNs:    now.Add(-time.Minute).UnixNano(),
+		ExpiryNs:       now.Add(time.Hour).UnixNano(),
+		LastAccessedNs: now.UnixNano(),
+	}})
+
+	rec = doJSONRequest(t, srv, http.MethodGet, "/api/v1/platforms?keyword=routable-count-target", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list platforms status after lease: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body = decodeJSONMap(t, rec)
+	items = body["items"].([]any)
+	item = items[0].(map[string]any)
+	if item["lease_count"] != float64(1) {
+		t.Fatalf("lease_count after lease: got %v, want %v", item["lease_count"], 1)
+	}
 
 	rec = doJSONRequest(t, srv, http.MethodGet, "/api/v1/platforms/"+platformID, nil, true)
 	if rec.Code != http.StatusOK {

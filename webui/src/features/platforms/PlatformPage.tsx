@@ -202,6 +202,10 @@ export function PlatformPage() {
                     <strong>{regexCount}</strong>
                   </span>
                   <span className="platform-fact">
+                    <span>{t("活跃租约")}</span>
+                    <strong>{platform.lease_count}</strong>
+                  </span>
+                  <span className="platform-fact">
                     <span>{t("租约时长")}</span>
                     <strong>{stickyTTL}</strong>
                   </span>

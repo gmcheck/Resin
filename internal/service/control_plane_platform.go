@@ -12,6 +12,7 @@ import (
 	"github.com/Resinat/Resin/internal/model"
 	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/platform"
+	"github.com/Resinat/Resin/internal/routing"
 	"github.com/Resinat/Resin/internal/state"
 )
 
@@ -27,6 +28,7 @@ type PlatformResponse struct {
 	RegexFilters                     []string `json:"regex_filters"`
 	RegionFilters                    []string `json:"region_filters"`
 	RoutableNodeCount                int      `json:"routable_node_count"`
+	LeaseCount                       int      `json:"lease_count"`
 	ReverseProxyMissAction           string   `json:"reverse_proxy_miss_action"`
 	ReverseProxyEmptyAccountBehavior string   `json:"reverse_proxy_empty_account_behavior"`
 	ReverseProxyFixedAccountHeader   string   `json:"reverse_proxy_fixed_account_header"`
@@ -58,7 +60,9 @@ func platformToResponse(p model.Platform) PlatformResponse {
 	}
 }
 
-func (s *ControlPlaneService) withRoutableNodeCount(resp PlatformResponse) PlatformResponse {
+// withRuntimeInfo enriches a platform response with runtime stats:
+// routable node count and active lease count.
+func (s *ControlPlaneService) withRuntimeInfo(resp PlatformResponse) PlatformResponse {
 	if s == nil || s.Pool == nil {
 		return resp
 	}
@@ -67,6 +71,14 @@ func (s *ControlPlaneService) withRoutableNodeCount(resp PlatformResponse) Platf
 		return resp
 	}
 	resp.RoutableNodeCount = plat.View().Size()
+	if s.Router != nil {
+		count := 0
+		s.Router.RangeLeases(resp.ID, func(_ string, _ routing.Lease) bool {
+			count++
+			return true
+		})
+		resp.LeaseCount = count
+	}
 	return resp
 }
 
@@ -325,7 +337,7 @@ func (s *ControlPlaneService) ListPlatforms() ([]PlatformResponse, error) {
 	}
 	resp := make([]PlatformResponse, len(platforms))
 	for i, p := range platforms {
-		resp[i] = s.withRoutableNodeCount(platformToResponse(p))
+		resp[i] = s.withRuntimeInfo(platformToResponse(p))
 	}
 	return resp, nil
 }
@@ -347,7 +359,7 @@ func (s *ControlPlaneService) GetPlatform(id string) (*PlatformResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	r := s.withRoutableNodeCount(platformToResponse(*mp))
+	r := s.withRuntimeInfo(platformToResponse(*mp))
 	return &r, nil
 }
 
@@ -451,7 +463,7 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 	s.Pool.RebuildPlatform(plat)
 	s.Pool.RegisterPlatform(plat)
 
-	r := s.withRoutableNodeCount(platformToResponse(mp))
+	r := s.withRuntimeInfo(platformToResponse(mp))
 	return &r, nil
 }
 
@@ -580,7 +592,7 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 		return nil, internal("replace platform in pool", err)
 	}
 
-	r := s.withRoutableNodeCount(platformToResponse(mp))
+	r := s.withRuntimeInfo(platformToResponse(mp))
 	return &r, nil
 }
 
@@ -620,7 +632,7 @@ func (s *ControlPlaneService) ResetPlatformToDefault(id string) (*PlatformRespon
 		return nil, internal("replace platform in pool", err)
 	}
 
-	r := s.withRoutableNodeCount(platformToResponse(mp))
+	r := s.withRuntimeInfo(platformToResponse(mp))
 	return &r, nil
 }
 
