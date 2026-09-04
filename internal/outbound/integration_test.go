@@ -92,7 +92,7 @@ func TestEndToEnd_NodeEnterRoutableView(t *testing.T) {
 	}
 
 	// Step 5: Remove outbound.
-	obMgr.RemoveNodeOutbound(entry)
+	obMgr.RemoveNodeOutbound(entry.Hash, entry)
 	pool.NotifyNodeDirty(hash)
 
 	// After removing outbound, platform should exclude the node.

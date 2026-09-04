@@ -913,7 +913,7 @@ func TestRemoveNodeOutbound_Closes(t *testing.T) {
 	pool := &mockPool{}
 	mgr := NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
 
-	mgr.RemoveNodeOutbound(entry)
+	mgr.RemoveNodeOutbound(entry.Hash, entry)
 
 	if !tc.closed.Load() {
 		t.Fatal("expected outbound to be closed after RemoveNodeOutbound")

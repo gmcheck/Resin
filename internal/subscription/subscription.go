@@ -123,6 +123,9 @@ type Subscription struct {
 	// Empty string means "use the process-wide default User-Agent".
 	userAgent string
 	content   string
+	// upstreamProxy is the per-subscription upstream proxy URI or ref:<hash>.
+	// Empty string means "no upstream proxy" (direct connection to node servers).
+	upstreamProxy string
 	// updateIntervalNs is the configured subscription refresh interval.
 	updateIntervalNs      int64
 	name                  string
@@ -234,6 +237,26 @@ func (s *Subscription) Content() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.content
+}
+
+// UpstreamProxy returns the per-subscription upstream proxy setting (thread-safe).
+// Empty string means no upstream proxy.
+func (s *Subscription) UpstreamProxy() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.upstreamProxy
+}
+
+// SetUpstreamProxy updates the per-subscription upstream proxy setting
+// (thread-safe). Bumps configVersion when the value changes, which triggers
+// a subscription refresh cycle to rebuild nodes with the new detour.
+func (s *Subscription) SetUpstreamProxy(v string) {
+	s.mu.Lock()
+	if s.upstreamProxy != v {
+		s.upstreamProxy = v
+		s.configVersion.Add(1)
+	}
+	s.mu.Unlock()
 }
 
 // ConfigVersion returns the scheduler input config version.

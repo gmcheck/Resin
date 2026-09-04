@@ -41,14 +41,29 @@ func buildOutboundSafely(builder OutboundBuilder, rawOptions json.RawMessage) (o
 	return builder.Build(rawOptions)
 }
 
+// NodeRegistrar registers node outbounds in the sing-box outbound manager
+// so they can be used as detour targets (ref:<hash> mode).
+// Implemented by SingboxBuilder.
+type NodeRegistrar interface {
+	RegisterNodeOutbound(tag string, rawOptions json.RawMessage) error
+	UnregisterNodeOutbound(tag string)
+}
+
 // OutboundManager manages outbound lifecycle and provides unified HTTP execution.
 type OutboundManager struct {
-	pool    PoolAccessor
-	builder OutboundBuilder
+	pool       PoolAccessor
+	builder    OutboundBuilder
+	registrar  NodeRegistrar // optional; nil disables sbOutbound manager registration
 }
 
 func NewOutboundManager(pool PoolAccessor, builder OutboundBuilder) *OutboundManager {
 	return &OutboundManager{pool: pool, builder: builder}
+}
+
+// SetNodeRegistrar sets the optional registrar for ref:<hash> upstream support.
+// Must be called before WarmupAll.
+func (m *OutboundManager) SetNodeRegistrar(r NodeRegistrar) {
+	m.registrar = r
 }
 
 func (m *OutboundManager) isLiveEntry(hash node.Hash, entry *node.NodeEntry) bool {
@@ -88,6 +103,11 @@ func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
 		return
 	}
 
+	// Register in sbOutbound manager for ref:<hash> detour support.
+	if m.registrar != nil {
+		_ = m.registrar.RegisterNodeOutbound(hash.Hex(), entry.RawOptions)
+	}
+
 	// Close-and-clear if the node disappeared/replaced right after CAS.
 	if !m.isLiveEntry(hash, entry) {
 		old := entry.Outbound.Swap(nil)
@@ -100,13 +120,17 @@ func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
 // RemoveNodeOutbound clears a node's outbound reference.
 // Accepts the entry directly because the node may already be deleted from the pool
 // (RemoveNodeFromSub deletes before firing onNodeRemoved callback).
-func (m *OutboundManager) RemoveNodeOutbound(entry *node.NodeEntry) {
+func (m *OutboundManager) RemoveNodeOutbound(hash node.Hash, entry *node.NodeEntry) {
 	if entry == nil {
 		return
 	}
 	old := entry.Outbound.Swap(nil)
 	if old != nil {
 		closeOutbound(*old)
+	}
+	// Unregister from sbOutbound manager (no-op if no registrar or no Remove API).
+	if m.registrar != nil {
+		m.registrar.UnregisterNodeOutbound(hash.Hex())
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Resinat/Resin/internal/model"
 	"github.com/Resinat/Resin/internal/node"
+	"github.com/Resinat/Resin/internal/outbound"
 	"github.com/Resinat/Resin/internal/state"
 	"github.com/Resinat/Resin/internal/subscription"
 	"github.com/Resinat/Resin/internal/topology"
@@ -28,6 +29,7 @@ type SubscriptionResponse struct {
 	URL                     string `json:"url"`
 	UserAgent               string `json:"user_agent"`
 	Content                 string `json:"content"`
+	UpstreamProxy           string `json:"upstream_proxy"`
 	UpdateInterval          string `json:"update_interval"`
 	NodeCount               int    `json:"node_count"`
 	HealthyNodeCount        int    `json:"healthy_node_count"`
@@ -70,6 +72,7 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 		SourceType:              sub.SourceType(),
 		URL:                     sub.URL(),
 		UserAgent:               sub.UserAgent(),
+		UpstreamProxy:           sub.UpstreamProxy(),
 		Content:                 sub.Content(),
 		UpdateInterval:          time.Duration(sub.UpdateIntervalNs()).String(),
 		NodeCount:               nodeCount,
@@ -123,6 +126,7 @@ type CreateSubscriptionRequest struct {
 	URL                     *string `json:"url"`
 	UserAgent               *string `json:"user_agent"`
 	Content                 *string `json:"content"`
+	UpstreamProxy           *string `json:"upstream_proxy"`
 	UpdateInterval          *string `json:"update_interval"`
 	Enabled                 *bool   `json:"enabled"`
 	Ephemeral               *bool   `json:"ephemeral"`
@@ -144,6 +148,29 @@ func parseSubscriptionSourceType(raw *string) (string, *ServiceError) {
 	default:
 		return "", invalidArg("source_type: must be remote or local")
 	}
+}
+
+// parseUpstreamProxyValue validates a subscription upstream_proxy value.
+// Empty is allowed (direct connection). URI values are validated with the
+// outbound parser; "ref:<hash>" requires a 32-character hex node hash.
+func parseUpstreamProxyValue(raw *string) (string, *ServiceError) {
+	if raw == nil {
+		return "", nil
+	}
+	value := strings.TrimSpace(*raw)
+	if value == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(value, "ref:") {
+		if subscription.ParseUpstreamRefHash(value) == "" {
+			return "", invalidArg("upstream_proxy: ref: must be a 32-character hex node hash")
+		}
+		return value, nil
+	}
+	if err := outbound.ValidateUpstreamProxyURL(value); err != nil {
+		return "", invalidArg("upstream_proxy: " + err.Error())
+	}
+	return value, nil
 }
 
 // CreateSubscription creates a new subscription.
@@ -226,6 +253,11 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		userAgent = strings.TrimSpace(*req.UserAgent)
 	}
 
+	upstreamProxy, verr := parseUpstreamProxyValue(req.UpstreamProxy)
+	if verr != nil {
+		return nil, verr
+	}
+
 	id := uuid.New().String()
 	now := time.Now().UnixNano()
 
@@ -235,6 +267,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		SourceType:                sourceType,
 		URL:                       subURL,
 		UserAgent:                 userAgent,
+		UpstreamProxy:             upstreamProxy,
 		Content:                   content,
 		UpdateIntervalNs:          int64(updateInterval),
 		Enabled:                   enabled,
@@ -252,6 +285,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 	sub.SetFetchConfig(subURL, int64(updateInterval))
 	sub.SetSourceType(sourceType)
 	sub.SetUserAgent(userAgent)
+	sub.SetUpstreamProxy(upstreamProxy)
 	sub.SetContent(content)
 	sub.SetIncrementalAliveNodes(incrementalAliveNodes)
 	sub.SetEphemeralNodeEvictDelayNs(int64(ephemeralNodeEvictDelay))
@@ -288,6 +322,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	urlChanged := false
 	contentChanged := false
 	userAgentChanged := false
+	upstreamProxyChanged := false
 	sourceType := sub.SourceType()
 
 	newName := sub.Name()
@@ -343,6 +378,21 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		}
 	}
 
+	// Empty upstream_proxy means "direct connection" (no detour injected).
+	newUpstreamProxy := sub.UpstreamProxy()
+	if upStr, ok, err := patch.optionalString("upstream_proxy"); err != nil {
+		return nil, err
+	} else if ok {
+		parsed, verr := parseUpstreamProxyValue(&upStr)
+		if verr != nil {
+			return nil, verr
+		}
+		newUpstreamProxy = parsed
+		if newUpstreamProxy != sub.UpstreamProxy() {
+			upstreamProxyChanged = true
+		}
+	}
+
 	newInterval := sub.UpdateIntervalNs()
 	if d, ok, err := patch.optionalDurationString("update_interval"); err != nil {
 		return nil, err
@@ -394,6 +444,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		SourceType:                sourceType,
 		URL:                       newURL,
 		UserAgent:                 newUserAgent,
+		UpstreamProxy:             newUpstreamProxy,
 		Content:                   newContent,
 		UpdateIntervalNs:          newInterval,
 		Enabled:                   newEnabled,
@@ -411,6 +462,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	sub.SetFetchConfig(newURL, newInterval)
 	sub.SetContent(newContent)
 	sub.SetUserAgent(newUserAgent)
+	sub.SetUpstreamProxy(newUpstreamProxy)
 	sub.SetEphemeral(newEphemeral)
 	sub.SetIncrementalAliveNodes(newIncrementalAliveNodes)
 	sub.SetEphemeralNodeEvictDelayNs(newEphemeralNodeEvictDelay)
@@ -422,7 +474,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	if enabledChanged {
 		s.Scheduler.SetSubscriptionEnabled(sub, newEnabled)
 	}
-	if urlChanged || contentChanged || userAgentChanged {
+	if urlChanged || contentChanged || userAgentChanged || upstreamProxyChanged {
 		go s.Scheduler.UpdateSubscription(sub)
 	}
 
@@ -474,7 +526,17 @@ func (s *ControlPlaneService) DeleteSubscription(id string) error {
 		s.SubMgr.Unregister(id)
 	})
 
-	return deleteErr
+	if deleteErr != nil {
+		return deleteErr
+	}
+
+	// Release the subscription's URI-mode upstream proxy outbound (if any)
+	// after nodes have been removed (design §4.2: nodes first, then upstream).
+	if s.OnSubscriptionDeleted != nil {
+		s.OnSubscriptionDeleted(id)
+	}
+
+	return nil
 }
 
 // RefreshSubscription triggers an immediate subscription refresh (blocks).

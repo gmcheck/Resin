@@ -28,6 +28,7 @@ type Subscription struct {
 	URL                       string `json:"url"`
 	UserAgent                 string `json:"user_agent"`
 	Content                   string `json:"content"`
+	UpstreamProxy             string `json:"upstream_proxy"`
 	UpdateIntervalNs          int64  `json:"update_interval_ns"`
 	Enabled                   bool   `json:"enabled"`
 	Ephemeral                 bool   `json:"ephemeral"`

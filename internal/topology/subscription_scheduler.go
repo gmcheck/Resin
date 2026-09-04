@@ -33,6 +33,12 @@ type SubscriptionScheduler struct {
 	// onSubReenabledNode is called for each non-evicted node hash when a
 	// subscription transitions from disabled to enabled.
 	onSubReenabledNode func(hash node.Hash)
+	// onRegisterUpstream registers a subscription-level upstream proxy
+	// outbound (URI mode) before pool diff.
+	onRegisterUpstream func(subID string, upstreamURI string) error
+	// onUnregisterUpstream unregisters a subscription-level upstream proxy
+	// outbound (URI mode) after pool diff.
+	onUnregisterUpstream func(subID string)
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -47,6 +53,13 @@ type SchedulerConfig struct {
 	OnSubUpdated func(sub *subscription.Subscription)
 	// OnSubReenabledNode is fired after false->true enabled transition.
 	OnSubReenabledNode func(hash node.Hash)
+	// OnRegisterUpstream registers a subscription-level upstream proxy
+	// outbound (URI mode) before pool diff. Idempotent.
+	OnRegisterUpstream func(subID string, upstreamURI string) error
+	// OnUnregisterUpstream unregisters a subscription-level upstream proxy
+	// outbound (URI mode) after pool diff when the new upstream is no longer
+	// a URI. No-op if nothing was registered.
+	OnUnregisterUpstream func(subID string)
 }
 
 // NewSubscriptionScheduler creates a new scheduler.
@@ -60,6 +73,8 @@ func NewSubscriptionScheduler(cfg SchedulerConfig) *SubscriptionScheduler {
 		cancelDownload:     cancelDownload,
 		onSubUpdated:       cfg.OnSubUpdated,
 		onSubReenabledNode: cfg.OnSubReenabledNode,
+		onRegisterUpstream: cfg.OnRegisterUpstream,
+		onUnregisterUpstream: cfg.OnUnregisterUpstream,
 		stopCh:             make(chan struct{}),
 	}
 	if cfg.Fetcher != nil {
@@ -199,6 +214,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	attemptUserAgent := sub.UserAgent()
 	attemptContent := sub.Content()
 	attemptConfigVersion := sub.ConfigVersion()
+	attemptUpstream := sub.UpstreamProxy()
 
 	// 1. Fetch/read content (lock-free).
 	var (
@@ -220,6 +236,31 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	if err != nil {
 		s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", err)
 		return
+	}
+
+	// 2b. Inject upstream detour into parsed node options (lock-free).
+	// This changes each ParsedNode's RawOptions (adds detour field) so that
+	// the node outbound will dial through the subscription's upstream proxy.
+	parsed = subscription.ApplyUpstreamDetour(parsed, attemptUpstream, sub.ID)
+
+	// 2b-2. Cycle check for ref-mode upstream: a "ref:<hash>" chain must
+	// not form a cycle (only ref references can close a Resin-internal loop; URI
+	// upstreams point outside Resin and cannot cycle).
+	if subscription.IsUpstreamRef(attemptUpstream) && s.pool != nil {
+		if err := subscription.ValidateUpstreamRefNoCycle(sub.ID, attemptUpstream, s.subManager, s.pool); err != nil {
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "upstream_cycle", err)
+			return
+		}
+	}
+
+	// 2c. Register URI-mode upstream outbound in sbOutbound manager
+	// (must happen before pool diff so node outbounds can resolve the detour).
+	isURIUpstream := attemptUpstream != "" && !subscription.IsUpstreamRef(attemptUpstream)
+	if isURIUpstream && s.onRegisterUpstream != nil {
+		if err := s.onRegisterUpstream(sub.ID, attemptUpstream); err != nil {
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "register_upstream", err)
+			return
+		}
 	}
 
 	// 3. Build refreshed managed nodes map (lock-free, pure computation).
@@ -336,6 +377,12 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 
 	if s.onSubUpdated != nil {
 		s.onSubUpdated(sub)
+	}
+
+	// After successful apply: if the new upstream is no longer a URI
+	// (empty or ref), unregister any previously registered URI upstream.
+	if !isURIUpstream && s.onUnregisterUpstream != nil {
+		s.onUnregisterUpstream(sub.ID)
 	}
 }
 

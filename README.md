@@ -61,6 +61,27 @@ It helps shield your services from unstable underlying proxy nodes by aggregatin
 - Plain HTTP proxy lines: `IP:PORT` or `IP:PORT:USER:PASS` (IPv4 and IPv6).
 - Base64-wrapped text subscriptions (for URI lines/plain-text node lists).
 
+### Subscription-Level Upstream Proxy
+
+When this machine cannot reach some subscription node servers directly, you can configure an **upstream proxy** per subscription: `local → upstream proxy → node server → target` (the target still sees each node's own egress IP). The field is the subscription's `upstream_proxy` (optional; **empty = connect nodes directly**). Set it in the WebUI subscription create/edit form, or via the `upstream_proxy` field of `POST/PATCH /api/v1/subscriptions`.
+
+Two input formats (choose one):
+
+- **External proxy URI**:
+  - `socks5://[user:pass@]host:port`, `socks5h://…` (remote DNS resolution)
+  - `http://…`, `https://…`
+  - bare `host:port` (treated as http)
+  - default ports: socks=1080, http=80, https=443
+- **Node reference**: `ref:<node-hash>` (32-char hex) — use another node's outbound from the global pool as the upstream. The referenced node must exist with a built outbound (otherwise the subscription refresh fails, see `last_error`). **The referenced node must not belong to the same subscription** (self-reference cycles are rejected).
+
+Behavior and boundaries:
+
+- **Priority**: node-level `detour` (`dialer-proxy` in subscription content) > subscription-level `upstream_proxy`. An existing node detour is never overwritten.
+- **Effect mechanism**: changes take effect on the next scheduled/manual refresh; applying rebuilds all of the subscription's nodes (node hashes change; probing/health state restarts — a one-time churn).
+- **Cycle detection**: `ref:` chains (A→B→A, or cycles across subscriptions via shared nodes) are rejected with an error; max chain depth 10. URI upstreams do not participate in cycle detection.
+- **Quota accounting unchanged**: the upstream only applies to the "dial the node server" leg; egress IP / per-IP quota / region stats are still computed from node egress.
+- **Not in this iteration**: per-node / per-platform upstream selection, multi-upstream load balancing, cascading cleanup when a referenced node is deleted, rebuild-without-download on upstream change.
+
 ### Supported outbound node types
 
 - For sing-box JSON/raw outbounds: `socks`, `http`, `shadowsocks`, `vmess`, `trojan`, `wireguard`, `hysteria`, `vless`, `shadowtls`, `tuic`, `hysteria2`, `anytls`, `ssh`.

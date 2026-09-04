@@ -383,6 +383,12 @@ func (a *resinApp) buildNetworkServers(engine *state.StateEngine) error {
 		GeoIP:          a.geoSvc,
 		MatcherRuntime: a.accountMatcher,
 	}
+	if a.topoRuntime.singboxBuilder != nil {
+		cpService.OnSubscriptionDeleted = func(subID string) {
+			tag := "__resin_sub_upstream_" + subID
+			a.topoRuntime.singboxBuilder.UnregisterDetourOutbound(tag)
+		}
+	}
 
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,

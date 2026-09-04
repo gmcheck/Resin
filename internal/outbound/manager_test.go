@@ -279,7 +279,7 @@ func TestEnsureNodeOutbound_NodeRemovedDuringBuild_DropsAndCloses(t *testing.T) 
 
 	// Simulate removal callback order: delete from pool first, then cleanup.
 	pool.removeEntry(entry.Hash)
-	mgr.RemoveNodeOutbound(entry)
+	mgr.RemoveNodeOutbound(entry.Hash, entry)
 
 	close(builder.release)
 	<-done
@@ -304,7 +304,7 @@ func TestRemoveNodeOutbound(t *testing.T) {
 		t.Fatal("setup: expected HasOutbound() == true")
 	}
 
-	mgr.RemoveNodeOutbound(entry)
+	mgr.RemoveNodeOutbound(entry.Hash, entry)
 	if entry.HasOutbound() {
 		t.Fatal("expected HasOutbound() == false after RemoveNodeOutbound")
 	}
@@ -314,7 +314,7 @@ func TestRemoveNodeOutbound_NilEntry(t *testing.T) {
 	pool := &mockPool{}
 	mgr := NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
 	// Should not panic.
-	mgr.RemoveNodeOutbound(nil)
+	mgr.RemoveNodeOutbound(node.Zero, nil)
 }
 
 func TestFetch_OutboundNotReady(t *testing.T) {

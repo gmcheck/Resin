@@ -241,11 +241,13 @@ func newTopologyRuntime(
 
 	singboxBuilder, err := outbound.NewSingboxBuilderWithConfig(outbound.SingboxBuilderConfig{
 		DNSUpstreams: envCfg.NodeDNSUpstreams,
+		UpstreamProxy: envCfg.UpstreamProxy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("singbox builder: %w", err)
 	}
 	outboundMgr := outbound.NewOutboundManager(pool, singboxBuilder)
+	outboundMgr.SetNodeRegistrar(singboxBuilder)
 
 	probeMgr := probe.NewProbeManager(probe.ProbeConfig{
 		Pool:        pool,
@@ -295,7 +297,7 @@ func newTopologyRuntime(
 	})
 	pool.SetOnNodeRemoved(func(hash node.Hash, entry *node.NodeEntry) {
 		markNodeRemovedDirty(engine, hash, entry)
-		outboundMgr.RemoveNodeOutbound(entry)
+		outboundMgr.RemoveNodeOutbound(hash, entry)
 		if entry != nil && entry.LatencyTable != nil {
 			entry.LatencyTable.Close()
 		}
@@ -313,6 +315,15 @@ func newTopologyRuntime(
 			outboundMgr.EnsureNodeOutbound(hash)
 			probeMgr.TriggerImmediateEgressProbe(hash)
 			probeMgr.TriggerImmediateLatencyProbe(hash)
+		},
+		OnRegisterUpstream: func(subID string, upstreamURI string) error {
+			tag := "__resin_sub_upstream_" + subID
+			dnsTag := "__resin_sub_dns_" + subID
+			return singboxBuilder.RegisterDetourOutbound(tag, dnsTag, upstreamURI)
+		},
+		OnUnregisterUpstream: func(subID string) {
+			tag := "__resin_sub_upstream_" + subID
+			singboxBuilder.UnregisterDetourOutbound(tag)
 		},
 	})
 	ephemeralCleaner := topology.NewEphemeralCleaner(
@@ -364,6 +375,7 @@ func bootstrapTopology(
 		sub.SetSourceType(ms.SourceType)
 		sub.SetUserAgent(ms.UserAgent)
 		sub.SetContent(ms.Content)
+		sub.SetUpstreamProxy(ms.UpstreamProxy)
 		sub.SetIncrementalAliveNodes(ms.IncrementalAliveNodes)
 		sub.SetEphemeralNodeEvictDelayNs(ms.EphemeralNodeEvictDelayNs)
 		sub.CreatedAtNs = ms.CreatedAtNs

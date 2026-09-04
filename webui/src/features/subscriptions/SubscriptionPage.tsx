@@ -48,6 +48,7 @@ const subscriptionCreateSchema = z.object({
   url: z.string(),
   content: z.string(),
   user_agent: z.string(),
+  upstream_proxy: z.string(),
   update_interval: z.string().trim().min(1, "更新间隔不能为空"),
   ephemeral_node_evict_delay: z.string().trim().min(1, "临时节点驱逐延迟不能为空"),
   enabled: z.boolean(),
@@ -97,6 +98,7 @@ function subscriptionToEditForm(subscription: Subscription): SubscriptionEditFor
     url: subscription.url,
     content: subscription.content ?? "",
     user_agent: subscription.user_agent ?? "",
+    upstream_proxy: subscription.upstream_proxy ?? "",
     update_interval: subscription.update_interval,
     ephemeral_node_evict_delay: subscription.ephemeral_node_evict_delay,
     enabled: subscription.enabled,
@@ -191,6 +193,7 @@ export function SubscriptionPage() {
       url: "",
       content: "",
       user_agent: "",
+      upstream_proxy: "",
       update_interval: "12h",
       ephemeral_node_evict_delay: "72h",
       enabled: true,
@@ -210,6 +213,7 @@ export function SubscriptionPage() {
       url: "",
       content: "",
       user_agent: "",
+      upstream_proxy: "",
       update_interval: "12h",
       ephemeral_node_evict_delay: "72h",
       enabled: true,
@@ -266,6 +270,7 @@ export function SubscriptionPage() {
         url: "",
         content: "",
         user_agent: "",
+        upstream_proxy: "",
         update_interval: LOCAL_SOURCE_UPDATE_INTERVAL,
         ephemeral_node_evict_delay: "72h",
         enabled: true,
@@ -292,6 +297,7 @@ export function SubscriptionPage() {
         enabled: formData.enabled,
         ephemeral: formData.ephemeral,
         incremental_alive_nodes: formData.incremental_alive_nodes,
+        upstream_proxy: formData.upstream_proxy.trim(),
         ...(formData.source_type === "remote"
           ? { url: formData.url.trim(), user_agent: formData.user_agent.trim() }
           : { content: formData.content }),
@@ -442,6 +448,7 @@ export function SubscriptionPage() {
       enabled: values.enabled,
       ephemeral: values.ephemeral,
       incremental_alive_nodes: values.incremental_alive_nodes,
+      upstream_proxy: values.upstream_proxy.trim(),
       ...(values.source_type === "remote"
         ? { url: values.url.trim(), user_agent: values.user_agent.trim() }
         : { content: values.content }),
@@ -971,6 +978,18 @@ export function SubscriptionPage() {
                     ) : null}
                   </div>
 
+                  <div className="field-group field-span-2">
+                    <label className="field-label" htmlFor="edit-sub-upstream-proxy">
+                      {t("前置代理（可选）")}
+                    </label>
+                    <Input
+                      id="edit-sub-upstream-proxy"
+                      placeholder="socks5://127.0.0.1:1080 或 ref:<节点hash>"
+                      {...editForm.register("upstream_proxy")}
+                    />
+                    <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI或 ref:<节点hash>（32 位十六进制）")}</p>
+                  </div>
+
                   <div className="platform-config-actions">
                     <Button type="submit" disabled={updateMutation.isPending}>
                       {updateMutation.isPending ? t("保存中...") : t("保存配置")}
@@ -1212,6 +1231,18 @@ export function SubscriptionPage() {
                 {createForm.formState.errors.ephemeral_node_evict_delay?.message ? (
                   <p className="field-error">{t(createForm.formState.errors.ephemeral_node_evict_delay.message)}</p>
                 ) : null}
+              </div>
+
+              <div className="field-group field-span-2">
+                <label className="field-label" htmlFor="create-sub-upstream-proxy">
+                  {t("前置代理（可选）")}
+                </label>
+                <Input
+                  id="create-sub-upstream-proxy"
+                  placeholder="socks5://127.0.0.1:1080 或 ref:<节点hash>"
+                  {...createForm.register("upstream_proxy")}
+                />
+                <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI或 ref:<节点hash>（32 位十六进制）")}</p>
               </div>
 
               <div className="detail-actions" style={{ justifyContent: "flex-end" }}>

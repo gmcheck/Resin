@@ -200,6 +200,10 @@ Note: Once enabled, requests without authentication information are rejected ins
   "自定义 User-Agent": "Custom User-Agent",
   "留空使用默认 clash.meta。部分订阅服务按客户端 UA 分发不同内容":
     "Leave empty to use the default clash.meta. Some subscription providers serve different content based on the client User-Agent.",
+  "前置代理（可选）": "Upstream proxy (optional)",
+  "留空=直连节点；支持 socks5/http/https 等 URI或 ref:<节点hash>（32 位十六进制））":
+    "Leave empty = connect nodes directly. Supports socks5/http/https URI or ref:<node hash> (32-char hex.",
+  "前置代理": "Upstream proxy",
   "订阅来源": "Subscription source",
   "订阅来源类型": "Subscription source type",
   "订阅类型": "Subscription type",

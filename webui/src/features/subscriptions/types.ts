@@ -5,6 +5,7 @@ export type Subscription = {
   url: string;
   content: string;
   user_agent: string;
+  upstream_proxy: string;
   update_interval: string;
   node_count: number;
   healthy_node_count: number;
@@ -30,6 +31,7 @@ export type SubscriptionCreateInput = {
   source_type?: "remote" | "local";
   url?: string;
   content?: string;
+  upstream_proxy?: string;
   update_interval?: string;
   enabled?: boolean;
   ephemeral?: boolean;
@@ -42,6 +44,7 @@ export type SubscriptionUpdateInput = {
   url?: string;
   content?: string;
   user_agent?: string;
+  upstream_proxy?: string;
   update_interval?: string;
   enabled?: boolean;
   ephemeral?: boolean;

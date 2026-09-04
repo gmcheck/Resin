@@ -61,6 +61,10 @@ type ControlPlaneService struct {
 	RuntimeCfg      *atomic.Pointer[config.RuntimeConfig]
 	EnvCfg          *config.EnvConfig
 	EndpointRuntime EndpointRuntime
+	// OnSubscriptionDeleted, when set, is invoked after a subscription is
+	// successfully deleted from persistence and runtime state. Used to release
+	// per-subscription upstream proxy outbounds (URI mode).
+	OnSubscriptionDeleted func(subID string)
 
 	configMu      sync.Mutex
 	configVersion int
@@ -109,6 +113,7 @@ var subscriptionPatchAllowedFields = map[string]bool{
 	"name":                       true,
 	"url":                        true,
 	"user_agent":                 true,
+	"upstream_proxy":             true,
 	"content":                    true,
 	"update_interval":            true,
 	"enabled":                    true,

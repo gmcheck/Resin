@@ -84,8 +84,8 @@ func newMajorFlowHarness(t *testing.T, subscriptionUserAgent string) *majorFlowH
 		pool.RecordLatency(hash, "example.com", &latency)
 		pool.RecordResult(hash, true)
 	})
-	pool.SetOnNodeRemoved(func(_ node.Hash, entry *node.NodeEntry) {
-		outboundMgr.RemoveNodeOutbound(entry)
+	pool.SetOnNodeRemoved(func(hash node.Hash, entry *node.NodeEntry) {
+		outboundMgr.RemoveNodeOutbound(hash, entry)
 	})
 
 	router := routing.NewRouter(routing.RouterConfig{

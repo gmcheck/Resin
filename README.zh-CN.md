@@ -61,6 +61,27 @@
 - 纯 HTTP 代理行：`IP:PORT` 或 `IP:PORT:USER:PASS`（支持 IPv4 和 IPv6）。
 - Base64 包裹的文本订阅（例如 URI 行或纯文本节点列表）。
 
+### 订阅级前置代理（Subscription-Level Upstream Proxy）
+
+当本机无法直连部分订阅节点服务器时，可给订阅配置一个**前置代理**：`本机 → 前置代理 → 节点服务器 → 目标`（目标看到的仍是节点自身出口 IP）。字段为订阅的 `upstream_proxy`（可空；**留空 = 直连节点**），WebUI 在订阅新建/编辑表单中填写，API 经 `POST/PATCH /api/v1/subscriptions` 的 `upstream_proxy` 字段设置。
+
+支持两种格式（二选一）：
+
+- **外部代理 URI**：
+  - `socks5://[user:pass@]host:port`、`socks5h://…`（远端域名解析）
+  - `http://…`、`https://…`
+  - 裸 `host:port`（默认按 http 处理）
+  - 端口默认值：socks=1080、http=80、https=443
+- **节点引用**：`ref:<node-hash>`（32 位十六进制），引用全局节点池内另一个节点的 outbound 作为前置。要求该节点已存在且 outbound 已构建（否则订阅刷新报错，见 `last_error`）；**注意前置节点不能是本订阅自身的节点**（自引用成环会被拒绝）。
+
+行为与边界：
+
+- **优先级**：节点自带 `detour`（订阅内容中的 `dialer-proxy`）> 订阅级 `upstream_proxy`。节点已有 detour 时订阅级不覆盖。
+- **生效机制**：修改后随下一次定时/手动刷新生效；生效时该订阅全部节点重建一轮（node hash 变化，探测/健康状态重新开始，属一次性 churn）。
+- **循环检测**：`ref:` 链（A→B→A 或多订阅经共享节点成环）会被拒绝并报错，链深上限 10；URI 前置不参与环检测。
+- **配额口径不变**：前置只作用于「拨节点服务器」这一段，egress IP / 每 IP 配额 / 区域统计仍按节点出口计算。
+- **本期不做**：per-node / per-platform 前置选择、多前置负载均衡、被引用节点删除时的级联清理、换前置免下载立即重建。
+
 ### 支持的出站节点协议类型
 
 - 对于 sing-box JSON/原始 outbounds：`socks`、`http`、`shadowsocks`、`vmess`、`trojan`、`wireguard`、`hysteria`、`vless`、`shadowtls`、`tuic`、`hysteria2`、`anytls`、`ssh`。

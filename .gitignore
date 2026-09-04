@@ -1,4 +1,11 @@
 /resin
+/resin.exe
+
+# Local runtime data (state.db / cache.db / metrics / logs)
+/data/
+
+# Local agent learning logs
+/.learnings/
 .env
 sing-box-reference
 .agents
