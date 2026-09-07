@@ -2838,11 +2838,6 @@ a {
   background: rgba(241, 143, 1, 0.85);
 }
 
-.platform-ip-quota-more {
-  padding: 6px 12px;
-  font-size: 11px;
-}
-
 .platform-ip-quota-ip-link {
   justify-self: start;
   max-width: 100%;

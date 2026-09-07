@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { OffsetPagination } from "../../components/ui/OffsetPagination";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
@@ -11,7 +12,7 @@ import { getPlatformIPQuota } from "./api";
 import type { Platform, PlatformIPQuotaAccountDetail, PlatformIPQuotaIPEntry } from "./types";
 
 const QUOTA_REFRESH_MS = 5_000;
-const MAX_VISIBLE_IPS = 50;
+const IP_QUOTA_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 // Cross-tab navigation target: opening an IP modal from the lease table.
 export type QuotaFocusTarget = {
@@ -171,12 +172,21 @@ export function PlatformIPQuotaPanel({
   const { t } = useI18n();
   const [selectedIP, setSelectedIP] = useState<string | null>(null);
   const [appliedFocusSeq, setAppliedFocusSeq] = useState(0);
+  const [ipPage, setIPPage] = useState(0);
+  const [ipPageSize, setIPPageSize] = useState<number>(IP_QUOTA_PAGE_SIZE_OPTIONS[0]);
+  const [lastPlatformId, setLastPlatformId] = useState(platform.id);
 
   // Cross-tab focus (lease table → IP modal): applied during render so the
   // modal opens without an effect round-trip; seq handles re-clicking the same IP.
   if (focusTarget && focusTarget.seq !== appliedFocusSeq) {
     setAppliedFocusSeq(focusTarget.seq);
     setSelectedIP(focusTarget.ip);
+  }
+
+  // Reset pagination when the panel is reused for another platform.
+  if (platform.id !== lastPlatformId) {
+    setLastPlatformId(platform.id);
+    setIPPage(0);
   }
 
   const quotaQuery = useQuery({
@@ -191,7 +201,18 @@ export function PlatformIPQuotaPanel({
   const maxAccounts = quota?.max_accounts_per_ip ?? platform.max_accounts_per_ip;
   const windowLabel = quota ? formatGoDuration(quota.ip_account_window, t("默认")) : t("默认");
   const sortedIPs = sortIPsByAccounts(quota?.ips ?? []);
-  const visibleIPs = sortedIPs.slice(0, MAX_VISIBLE_IPS);
+  const totalIPs = sortedIPs.length;
+  const ipTotalPages = Math.max(1, Math.ceil(totalIPs / ipPageSize));
+  // The snapshot refreshes every 5s and IPs slide out of the counting window,
+  // so derive the page from the live total instead of mutating state in effects.
+  const currentIPPage = Math.min(ipPage, ipTotalPages - 1);
+  const visibleIPs = sortedIPs.slice(currentIPPage * ipPageSize, currentIPPage * ipPageSize + ipPageSize);
+
+  const changeIPPageSize = (next: number) => {
+    setIPPageSize(next);
+    setIPPage(0);
+  };
+
   // Live lookup keeps the modal fresh with the 5s query refresh; if the IP
   // slides out of the window while open, the modal degrades to an empty state.
   const selectedEntry = selectedIP
@@ -242,59 +263,66 @@ export function PlatformIPQuotaPanel({
           </div>
 
           <div className="platform-ip-quota-metrics">
-            <span>
+            <span title={t("每次随机选路因 IP 配额已满而被拒的累计次数；单次请求最多重试 8 次，故数值通常远大于实际请求数")}>
               <ShieldAlert size={13} />
-              {t("配额阻断")} {quota?.ip_quota_blocked_total ?? 0}
+              {t("路由拦截")} {quota?.ip_quota_blocked_total ?? 0}
             </span>
-            <span>
+            <span title={t("所有出口 IP 配额均已满时，强制放行至 N+1 溢出槽位的累计次数；每次 +1 意味着一次实际超出配额上限")}>
               <TrendingUp size={13} />
-              {t("兜底放行")} {quota?.ip_quota_fallback_total ?? 0}
+              {t("溢出放行")} {quota?.ip_quota_fallback_total ?? 0}
             </span>
           </div>
 
-          {visibleIPs.length ? (
-            <div className="platform-ip-quota-table">
-              <div className="platform-ip-quota-row platform-ip-quota-row-head">
-                <span>{t("出口 IP")}</span>
-                <span>{t("窗口内账号数")}</span>
-                <span>{t("使用率")}</span>
+          {totalIPs ? (
+            <>
+              <div className="platform-ip-quota-table">
+                <div className="platform-ip-quota-row platform-ip-quota-row-head">
+                  <span>{t("出口 IP")}</span>
+                  <span>{t("窗口内账号数")}</span>
+                  <span>{t("使用率")}</span>
+                </div>
+                {visibleIPs.map((item) => {
+                  const ratio = maxAccounts > 0 ? item.accounts / maxAccounts : 0;
+                  const full = item.accounts >= maxAccounts;
+                  return (
+                    <div key={item.ip} className="platform-ip-quota-row">
+                      <button
+                        type="button"
+                        className="platform-ip-quota-ip-link"
+                        title={t("查看该 IP 绑定的账号")}
+                        onClick={() => setSelectedIP(item.ip)}
+                      >
+                        {item.ip}
+                      </button>
+                      <span>
+                        {item.accounts} / {maxAccounts}
+                      </span>
+                      <span className="platform-ip-quota-usage">
+                        <i
+                          className={`platform-ip-quota-bar ${full ? "platform-ip-quota-bar-full" : ""}`}
+                          style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }}
+                        />
+                        {full ? (
+                          <Badge variant="warning">{t("满额")}</Badge>
+                        ) : (
+                          <small>{Math.round(ratio * 100)}%</small>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-              {visibleIPs.map((item) => {
-                const ratio = maxAccounts > 0 ? item.accounts / maxAccounts : 0;
-                const full = item.accounts >= maxAccounts;
-                return (
-                  <div key={item.ip} className="platform-ip-quota-row">
-                    <button
-                      type="button"
-                      className="platform-ip-quota-ip-link"
-                      title={t("查看该 IP 绑定的账号")}
-                      onClick={() => setSelectedIP(item.ip)}
-                    >
-                      {item.ip}
-                    </button>
-                    <span>
-                      {item.accounts} / {maxAccounts}
-                    </span>
-                    <span className="platform-ip-quota-usage">
-                      <i
-                        className={`platform-ip-quota-bar ${full ? "platform-ip-quota-bar-full" : ""}`}
-                        style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }}
-                      />
-                      {full ? (
-                        <Badge variant="warning">{t("满额")}</Badge>
-                      ) : (
-                        <small>{Math.round(ratio * 100)}%</small>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-              {sortedIPs.length > visibleIPs.length ? (
-                <p className="muted platform-ip-quota-more">
-                  {t("仅展示账号数最多的前 {{count}} 个 IP", { count: visibleIPs.length })}
-                </p>
-              ) : null}
-            </div>
+
+              <OffsetPagination
+                page={currentIPPage}
+                totalPages={ipTotalPages}
+                totalItems={totalIPs}
+                pageSize={ipPageSize}
+                pageSizeOptions={IP_QUOTA_PAGE_SIZE_OPTIONS}
+                onPageChange={setIPPage}
+                onPageSizeChange={changeIPPageSize}
+              />
+            </>
           ) : (
             <div className="empty-box dashboard-empty">
               <Gauge size={14} />

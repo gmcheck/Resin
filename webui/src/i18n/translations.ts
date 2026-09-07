@@ -379,12 +379,15 @@ Note: Once enabled, requests without authentication information are rejected ins
   "单 IP 上限": "Per-IP limit",
   "统计窗口": "Counting window",
   "满额 IP 数": "Full IPs",
-  "配额阻断": "Quota blocked",
-  "兜底放行": "Fallback admitted",
+  "路由拦截": "Route picks blocked",
+  "每次随机选路因 IP 配额已满而被拒的累计次数；单次请求最多重试 8 次，故数值通常远大于实际请求数":
+    "Cumulative count of random route picks rejected because the IP quota is full; each request retries up to 8 times, so this number is typically much larger than actual requests",
+  "溢出放行": "Overflow admitted",
+  "所有出口 IP 配额均已满时，强制放行至 N+1 溢出槽位的累计次数；每次 +1 意味着一次实际超出配额上限":
+    "Cumulative count of forced admissions to the N+1 overflow slot when all egress IPs are at quota; each +1 means one actual quota overshoot",
   "窗口内账号数": "Accounts in window",
   "使用率": "Usage",
   "满额": "Full",
-  "仅展示账号数最多的前 {{count}} 个 IP": "Showing top {{count}} IPs by account count",
   "统计窗口内暂无账号绑定记录": "No account bindings recorded in the counting window",
   "IP 配额": "IP quota",
   " 账号": " accounts",
