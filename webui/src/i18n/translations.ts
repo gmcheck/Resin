@@ -204,6 +204,10 @@ Note: Once enabled, requests without authentication information are rejected ins
   "留空=直连节点；支持 socks5/http/https 等 URI、ref:<节点hash>（32 位十六进制）或 platform:<平台名>（自动选该平台延迟最低的节点，失败自动切换）":
     "Leave empty = connect nodes directly. Supports a socks5/http/https URI, ref:<node hash> (32-char hex), or platform:<name> (picks the lowest-latency node in that platform, switching automatically on failure).",
   "前置代理": "Upstream proxy",
+  "该节点拨号到节点服务器时经过的中转。": "The hop this node dials through to reach its server.",
+  "节点引用": "Node reference",
+  "待解析": "Pending",
+  "域名": "domain",
   "订阅来源": "Subscription source",
   "订阅来源类型": "Subscription source type",
   "订阅类型": "Subscription type",

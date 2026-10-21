@@ -6,6 +6,8 @@ export type Subscription = {
   content: string;
   user_agent: string;
   upstream_proxy: string;
+  /** Node hash a platform:<name> upstream is currently resolved to. Runtime-only. */
+  upstream_resolved_hash: string;
   update_interval: string;
   node_count: number;
   healthy_node_count: number;

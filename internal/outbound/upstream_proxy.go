@@ -51,6 +51,35 @@ func ValidateUpstreamProxyURL(raw string) error {
 	return err
 }
 
+// redactURLCredentials removes the password from any scheme://user:pass@host
+// occurrence inside s. Used only for error text: the configured value itself is
+// intentionally shown verbatim in the UI.
+func redactURLCredentials(s string) string {
+	const marker = "://"
+	var b strings.Builder
+	rest := s
+	for {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			b.WriteString(rest)
+			return b.String()
+		}
+		b.WriteString(rest[:i+len(marker)])
+		rest = rest[i+len(marker):]
+		at := strings.Index(rest, "@")
+		slash := strings.IndexAny(rest, "/?# ")
+		if at < 0 || (slash >= 0 && slash < at) {
+			continue // no userinfo in this authority
+		}
+		userinfo := rest[:at]
+		if colon := strings.Index(userinfo, ":"); colon >= 0 {
+			userinfo = userinfo[:colon] + ":***"
+		}
+		b.WriteString(userinfo)
+		rest = rest[at:]
+	}
+}
+
 func parseUpstreamProxyURL(raw string) (upstreamProxySpec, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -61,7 +90,9 @@ func parseUpstreamProxyURL(raw string) (upstreamProxySpec, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return upstreamProxySpec{}, fmt.Errorf("parse upstream proxy URL: %w", err)
+		// url.Parse's error string embeds the full URL, which would echo the
+		// proxy password into last_error (and from there into the UI).
+		return upstreamProxySpec{}, fmt.Errorf("parse upstream proxy URL: %s", redactURLCredentials(err.Error()))
 	}
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {

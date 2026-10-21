@@ -23,13 +23,18 @@ import (
 
 // SubscriptionResponse is the API response for a subscription.
 type SubscriptionResponse struct {
-	ID                      string `json:"id"`
-	Name                    string `json:"name"`
-	SourceType              string `json:"source_type"`
-	URL                     string `json:"url"`
-	UserAgent               string `json:"user_agent"`
-	Content                 string `json:"content"`
-	UpstreamProxy           string `json:"upstream_proxy"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	SourceType    string `json:"source_type"`
+	URL           string `json:"url"`
+	UserAgent     string `json:"user_agent"`
+	Content       string `json:"content"`
+	UpstreamProxy string `json:"upstream_proxy"`
+	// UpstreamResolvedHash is the node hash a platform:<name> upstream is
+	// currently resolved to. Runtime-only (never persisted): it lets the UI show
+	// which node is actually used as the upstream and changes when the scheduler
+	// re-picks after a failover. Empty for direct/URI/ref upstreams.
+	UpstreamResolvedHash    string `json:"upstream_resolved_hash,omitempty"`
 	UpdateInterval          string `json:"update_interval"`
 	NodeCount               int    `json:"node_count"`
 	HealthyNodeCount        int    `json:"healthy_node_count"`
@@ -73,6 +78,7 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 		URL:                     sub.URL(),
 		UserAgent:               sub.UserAgent(),
 		UpstreamProxy:           sub.UpstreamProxy(),
+		UpstreamResolvedHash:    sub.UpstreamResolvedHash(),
 		Content:                 sub.Content(),
 		UpdateInterval:          time.Duration(sub.UpdateIntervalNs()).String(),
 		NodeCount:               nodeCount,

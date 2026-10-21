@@ -195,3 +195,48 @@ func TestAPIContract_SubscriptionUpstreamProxy_PlatformPatch(t *testing.T) {
 		t.Fatalf("patch roundtrip: got %v", body["upstream_proxy"])
 	}
 }
+
+// The resolved hash is runtime-only state: it must be exposed for platform
+// upstreams (so the UI can show the picked node) and stay absent otherwise.
+func TestAPIContract_SubscriptionUpstreamProxy_ResolvedHashExposed(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+
+	id := mustCreateSub(t, srv, "resolved-hash", "platform:HK")
+	rec := doJSONRequest(t, srv, http.MethodGet, "/api/v1/subscriptions/"+id, nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := decodeJSONMap(t, rec)
+	if _, ok := body["upstream_resolved_hash"]; ok {
+		t.Fatalf("resolved hash must be omitted before a refresh, got %v", body["upstream_resolved_hash"])
+	}
+
+	// Simulate the scheduler having picked a node.
+	sub, ok := cp.SubMgr.Get(id)
+	if !ok {
+		t.Fatalf("subscription %s not registered", id)
+	}
+	const picked = "a0a8ffd679b6c23ba0ddf842ca2185b0"
+	sub.SetUpstreamResolvedHash(picked)
+
+	rec = doJSONRequest(t, srv, http.MethodGet, "/api/v1/subscriptions/"+id, nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get after pick status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body = decodeJSONMap(t, rec)
+	if body["upstream_resolved_hash"] != picked {
+		t.Fatalf("resolved hash: got %v, want %s", body["upstream_resolved_hash"], picked)
+	}
+
+	// Clearing the upstream drops the stale pick.
+	rec = doJSONRequest(t, srv, http.MethodPatch, "/api/v1/subscriptions/"+id, map[string]any{
+		"upstream_proxy": "",
+	}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body = decodeJSONMap(t, rec)
+	if got, ok := body["upstream_resolved_hash"]; ok && got != "" {
+		t.Fatalf("resolved hash should be cleared, got %v", got)
+	}
+}

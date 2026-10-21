@@ -250,6 +250,74 @@ function sortIndicator(active: boolean, order: SortOrder): string {
   return order === "asc" ? "▲" : "▼";
 }
 
+// --- Upstream proxy display helpers ---------------------------------------
+
+type NodeUpstreamEntry = {
+  subscriptionId: string;
+  subscriptionName: string;
+  mode: "uri" | "ref" | "platform";
+  value: string;
+  resolvedHash: string;
+  domain: boolean;
+};
+
+function upstreamMode(value: string): NodeUpstreamEntry["mode"] {
+  if (/^platform:/i.test(value)) {
+    return "platform";
+  }
+  if (/^ref:/i.test(value)) {
+    return "ref";
+  }
+  return "uri";
+}
+
+/** Extracts the host part of a proxy URI, dropping scheme, credentials and port. */
+function upstreamHost(value: string): string {
+  let rest = value.trim();
+  const schemeEnd = rest.indexOf("://");
+  if (schemeEnd >= 0) {
+    rest = rest.slice(schemeEnd + 3);
+  }
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    rest = rest.slice(at + 1);
+  }
+  const stop = rest.search(/[/?#]/);
+  if (stop >= 0) {
+    rest = rest.slice(0, stop);
+  }
+  if (rest.startsWith("[")) {
+    const close = rest.indexOf("]");
+    return close > 0 ? rest.slice(0, close + 1) : rest;
+  }
+  const colon = rest.lastIndexOf(":");
+  return colon > 0 ? rest.slice(0, colon) : rest;
+}
+
+function isIpHost(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(bare)) {
+    return true;
+  }
+  return bare.includes(":");
+}
+
+function upstreamSchemeLabel(value: string): string {
+  const match = /^([a-z0-9+.-]+):\/\//i.exec(value.trim());
+  const scheme = (match?.[1] || "http").toLowerCase();
+  if (scheme === "socks" || scheme === "socks5" || scheme === "socks5h") {
+    return "SOCKS5";
+  }
+  if (scheme === "https") {
+    return "HTTPS";
+  }
+  return "HTTP";
+}
+
+function shortNodeHash(hash: string): string {
+  return hash.length > 8 ? `${hash.slice(0, 8)}…` : hash;
+}
+
 function regionToFlag(region: string | undefined): string {
   if (!region || region.length !== 2) {
     return region || "-";
@@ -353,6 +421,39 @@ export function NodesPage() {
 
   const detailNode = nodeDetailQuery.data ?? selectedNode;
   const drawerVisible = drawerOpen && Boolean(detailNode);
+
+  // Subscription-level upstream proxies that apply to the selected node. A node
+  // can belong to several subscriptions, so list every distinct one.
+  const nodeUpstreams = useMemo<NodeUpstreamEntry[]>(() => {
+    if (!detailNode) {
+      return [];
+    }
+    const subs = subscriptionsQuery.data ?? [];
+    const seen = new Set<string>();
+    const entries: NodeUpstreamEntry[] = [];
+    for (const tag of detailNode.tags) {
+      if (seen.has(tag.subscription_id)) {
+        continue;
+      }
+      seen.add(tag.subscription_id);
+      const sub = subs.find((item) => item.id === tag.subscription_id);
+      const value = sub?.upstream_proxy?.trim() ?? "";
+      if (!value) {
+        continue;
+      }
+      const mode = upstreamMode(value);
+      const host = mode === "uri" ? upstreamHost(value) : "";
+      entries.push({
+        subscriptionId: tag.subscription_id,
+        subscriptionName: tag.subscription_name,
+        mode,
+        value,
+        resolvedHash: sub?.upstream_resolved_hash ?? "",
+        domain: mode === "uri" && host !== "" && !isIpHost(host),
+      });
+    }
+    return entries;
+  }, [detailNode, subscriptionsQuery.data]);
 
   useEffect(() => {
     if (!drawerVisible) {
@@ -952,6 +1053,46 @@ export function NodesPage() {
                   <div className="callout callout-error">{t("最近错误：{{message}}", { message: detailNode.last_error })}</div>
                 ) : null}
               </section>
+
+              {nodeUpstreams.length ? (
+                <section className="platform-drawer-section">
+                  <div className="platform-drawer-section-head">
+                    <h4>{t("前置代理")}</h4>
+                    <p>{t("该节点拨号到节点服务器时经过的中转。")}</p>
+                  </div>
+                  <div className="node-upstream-list">
+                    {nodeUpstreams.map((item) => (
+                      <div className="node-upstream-item" key={item.subscriptionId}>
+                        <div className="node-upstream-head">
+                          <span className="node-upstream-sub" title={item.subscriptionName}>
+                            {item.subscriptionName}
+                          </span>
+                          <Badge variant={item.mode === "platform" ? "muted" : "neutral"}>
+                            {item.mode === "platform"
+                              ? t("平台")
+                              : item.mode === "ref"
+                                ? t("节点引用")
+                                : upstreamSchemeLabel(item.value)}
+                          </Badge>
+                        </div>
+                        <div className="node-upstream-value">
+                          <span title={item.value}>{item.value}</span>
+                          {item.domain ? <span className="node-upstream-note">{t("域名")}</span> : null}
+                          {item.mode === "platform" ? (
+                            item.resolvedHash ? (
+                              <span className="node-upstream-target" title={item.resolvedHash}>
+                                → {shortNodeHash(item.resolvedHash)}
+                              </span>
+                            ) : (
+                              <span className="node-upstream-pending">{t("待解析")}</span>
+                            )
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="platform-drawer-section">
                 <div className="platform-drawer-section-head">

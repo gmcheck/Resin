@@ -77,6 +77,18 @@ Three input formats (choose one):
 
   The upstream node switches automatically: when the picked node trips its circuit breaker or leaves the platform's routable set, the scheduler re-picks and refreshes the subscription within the next scan (13–17s), with no manual action. If the platform currently has no routable node (e.g. right after startup before any node landed), the refresh fails and reports it in `last_error`, then retries after 30s.
 
+  The platform name is matched **exactly as written**: case-sensitive, no transliteration or fuzzy matching, but **non-ASCII names are allowed** (platform naming only forbids `. : | / \ @ ? # % ~`, spaces/tabs/newlines, and the reserved name `api`). So if the platform is literally named `前置代理`, then `platform:前置代理` is correct. Put the name directly after `platform:` — no quotes or brackets (surrounding whitespace is trimmed).
+
+  When platform mode does not take effect, read `last_error` to tell the causes apart:
+
+  | `last_error` | Meaning | What to do |
+  |---|---|---|
+  | `platform "X" has no routable node yet` | The platform exists but currently has no routable node (nodes not ready / no latency sample yet / all circuit-open, or the platform only contains this subscription's own nodes) | Wait for a probe round (auto-retried every 30s); make sure the platform includes healthy nodes from **other** subscriptions |
+  | `platform "X": platform not found` | The name does not match | Check the actual name in the platform list (watch case and full/half-width characters) |
+  | `upstream_proxy: invalid platform selector` | `platform:` was given with an empty name | Add the platform name |
+
+  A node is routable (all conditions required): not disabled by its subscriptions, outbound built, circuit closed, egress IP known, at least one latency sample, and matching the platform's tag/region filters. Newly created subscriptions or nodes enter the platform view only after one probe round.
+
 Behavior and boundaries:
 
 - **Priority**: node-level `detour` (`dialer-proxy` in subscription content) > subscription-level `upstream_proxy`. An existing node detour is never overwritten.
