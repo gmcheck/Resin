@@ -32,7 +32,13 @@ export type PageResponse<T> = {
   unique_healthy_egress_ips: number;
 };
 
-export type NodeSortBy = "tag" | "created_at" | "failure_count" | "region";
+export type NodeSortBy =
+  | "tag"
+  | "created_at"
+  | "failure_count"
+  | "region"
+  | "reference_latency_ms"
+  | "last_latency_probe_attempt";
 export type SortOrder = "asc" | "desc";
 
 export type NodeListFilters = {

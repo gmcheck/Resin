@@ -1679,7 +1679,11 @@ Query：
 * `sort_by`：排序字段（可选）
 * `sort_order`：`asc` 或 `desc`（可选）
 
-支持的 `sort_by`：`tag`、`created_at`、`failure_count`、`region`。其中 `tag` 表示按照节点 tag 排序。如果有多个 tag，按照所属 subscription 创建最早的那个。同 subscription 选字典序最小的。默认按 `tag` `asc` 排序。
+支持的 `sort_by`：`tag`、`created_at`、`failure_count`、`region`、`reference_latency_ms`、`last_latency_probe_attempt`。其中 `tag` 表示按照节点 tag 排序。如果有多个 tag，按照所属 subscription 创建最早的那个。同 subscription 选字典序最小的。默认按 `tag` `asc` 排序。
+
+`reference_latency_ms` 按列表展示的参考延迟排序：只有健康节点（`enabled` 且 `has_outbound` 且未熔断）且有 EWMA 数据时才参与数值比较。`last_latency_probe_attempt` 按该时间点排序，按时刻比较而非字符串比较。
+
+两个新字段的空值（无参考延迟、从未探测）无论 `sort_order` 如何都排在末尾；空值之间以及其他字段值相同时，统一按 `node_hash` 升序作为稳定 tie-break。
 
 Response：
 ```json

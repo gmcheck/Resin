@@ -282,3 +282,86 @@ func TestHandleListNodes_EnabledFilter(t *testing.T) {
 		t.Fatalf("enabled=false total: got %v, want 1", body["total"])
 	}
 }
+
+func TestSortNodeSummaries_ReferenceLatencyOrdersEmptyValuesLast(t *testing.T) {
+	latency := func(v float64) *float64 { return &v }
+	circuitOpenSince := "2026-10-21T00:00:00Z"
+
+	nodes := []service.NodeSummary{
+		{NodeHash: "hash-empty", Enabled: true, HasOutbound: true},
+		{NodeHash: "hash-slow", Enabled: true, HasOutbound: true, ReferenceLatencyMs: latency(300)},
+		{NodeHash: "hash-fast", Enabled: true, HasOutbound: true, ReferenceLatencyMs: latency(100)},
+		// Not healthy: the WebUI displays "-", so it must not take part in the
+		// numeric comparison even though a latency value exists.
+		{NodeHash: "hash-circuit", Enabled: true, HasOutbound: true, CircuitOpenSince: &circuitOpenSince, ReferenceLatencyMs: latency(50)},
+	}
+
+	assertOrder := func(t *testing.T, order string, want []string) {
+		t.Helper()
+		items := append([]service.NodeSummary(nil), nodes...)
+		sortNodeSummaries(items, Sorting{SortBy: "reference_latency_ms", SortOrder: order})
+		for i, expected := range want {
+			if items[i].NodeHash != expected {
+				got := make([]string, len(items))
+				for j, item := range items {
+					got[j] = item.NodeHash
+				}
+				t.Fatalf("sort_order=%s: got %v, want %v", order, got, want)
+			}
+		}
+	}
+
+	assertOrder(t, "asc", []string{"hash-fast", "hash-slow", "hash-circuit", "hash-empty"})
+	assertOrder(t, "desc", []string{"hash-slow", "hash-fast", "hash-circuit", "hash-empty"})
+}
+
+func TestSortNodeSummaries_LastLatencyProbeComparesInstants(t *testing.T) {
+	nodes := []service.NodeSummary{
+		{NodeHash: "hash-never"},
+		{NodeHash: "hash-whole-second", LastLatencyProbeAttempt: "2026-10-21T12:00:00Z"},
+		{NodeHash: "hash-half-second", LastLatencyProbeAttempt: "2026-10-21T12:00:00.5Z"},
+		{NodeHash: "hash-earlier", LastLatencyProbeAttempt: "2026-10-21T11:00:00Z"},
+	}
+
+	assertOrder := func(t *testing.T, order string, want []string) {
+		t.Helper()
+		items := append([]service.NodeSummary(nil), nodes...)
+		sortNodeSummaries(items, Sorting{SortBy: "last_latency_probe_attempt", SortOrder: order})
+		for i, expected := range want {
+			if items[i].NodeHash != expected {
+				got := make([]string, len(items))
+				for j, item := range items {
+					got[j] = item.NodeHash
+				}
+				t.Fatalf("sort_order=%s: got %v, want %v", order, got, want)
+			}
+		}
+	}
+
+	// "...:00Z" is earlier than "...:00.5Z" even though it sorts after it as text.
+	assertOrder(t, "asc", []string{"hash-earlier", "hash-whole-second", "hash-half-second", "hash-never"})
+	assertOrder(t, "desc", []string{"hash-half-second", "hash-whole-second", "hash-earlier", "hash-never"})
+}
+
+func TestHandleListNodes_AcceptsLatencySortFields(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+
+	subA := subscription.NewSubscription("11111111-1111-1111-1111-111111111111", "sub-a", "https://example.com/a", true, false)
+	cp.SubMgr.Register(subA)
+	addNodeForNodeListTest(t, cp, subA, `{"type":"ss","server":"1.1.1.1","port":443}`, "203.0.113.10")
+
+	for _, field := range []string{"reference_latency_ms", "last_latency_probe_attempt"} {
+		for _, order := range []string{"asc", "desc"} {
+			path := "/api/v1/nodes?subscription_id=" + subA.ID + "&sort_by=" + field + "&sort_order=" + order
+			rec := doJSONRequest(t, srv, http.MethodGet, path, nil, true)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("sort_by=%s sort_order=%s status: got %d, want %d, body=%s", field, order, rec.Code, http.StatusOK, rec.Body.String())
+			}
+			body := decodeJSONMap(t, rec)
+			items, ok := body["items"].([]any)
+			if !ok || len(items) != 1 {
+				t.Fatalf("sort_by=%s sort_order=%s items: got %T len=%d, want 1", field, order, body["items"], len(items))
+			}
+		}
+	}
+}
