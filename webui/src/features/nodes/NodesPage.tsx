@@ -565,7 +565,12 @@ export function NodesPage() {
     }),
     col.display({
       id: "reference_latency_ms",
-      header: t("参考延迟"),
+      header: () => (
+        <button type="button" className="table-sort-btn" onClick={() => changeSort("reference_latency_ms")}>
+          {t("参考延迟")}
+          <span>{sortIndicator(sortBy === "reference_latency_ms", sortOrder)}</span>
+        </button>
+      ),
       cell: (info) => {
         const node = info.row.original;
         const latencyMs = displayableReferenceLatencyMs(node);
@@ -580,7 +585,12 @@ export function NodesPage() {
       },
     }),
     col.accessor("last_latency_probe_attempt", {
-      header: t("上次探测"),
+      header: () => (
+        <button type="button" className="table-sort-btn" onClick={() => changeSort("last_latency_probe_attempt")}>
+          {t("上次探测")}
+          <span>{sortIndicator(sortBy === "last_latency_probe_attempt", sortOrder)}</span>
+        </button>
+      ),
       cell: (info) => formatRelativeTime(info.getValue()),
     }),
     col.accessor("failure_count", {

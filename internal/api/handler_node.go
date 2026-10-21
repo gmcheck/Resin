@@ -33,15 +33,57 @@ func nodeTagSortKey(n service.NodeSummary) string {
 	return bestTag
 }
 
+// nodeReferenceLatencySortKey mirrors the WebUI display rule for 参考延迟: only
+// healthy nodes (enabled, outbound-ready, not circuit-open) with measured EWMA
+// show a value, so only those take part in numeric comparison.
+func nodeReferenceLatencySortKey(n service.NodeSummary) *float64 {
+	if !n.IsHealthyAndEnabled() {
+		return nil
+	}
+	return n.ReferenceLatencyMs
+}
+
+// nodeSortValueMissing reports whether n has no value for the given sort key.
+// Missing values are always ordered last, independent of sort_order.
+func nodeSortValueMissing(sortBy string, n service.NodeSummary) bool {
+	switch sortBy {
+	case "reference_latency_ms":
+		return nodeReferenceLatencySortKey(n) == nil
+	case "last_latency_probe_attempt":
+		return n.LastLatencyProbeAttempt == ""
+	default:
+		return false
+	}
+}
+
+// compareRFC3339Nano orders RFC3339Nano timestamps by instant. Plain string
+// comparison is unreliable because Go trims trailing zeros in the fractional
+// part ("...:00Z" sorts after "...:00.5Z" as text, but is earlier in time).
+func compareRFC3339Nano(a, b string) int {
+	parsedA, errA := time.Parse(time.RFC3339Nano, a)
+	parsedB, errB := time.Parse(time.RFC3339Nano, b)
+	if errA != nil || errB != nil {
+		return strings.Compare(a, b)
+	}
+	return parsedA.Compare(parsedB)
+}
+
 func compareNodeSummaries(sortBy string, a, b service.NodeSummary) int {
 	order := 0
 	switch sortBy {
 	case "created_at":
-		order = strings.Compare(a.CreatedAt, b.CreatedAt)
+		order = compareRFC3339Nano(a.CreatedAt, b.CreatedAt)
 	case "failure_count":
 		order = cmp.Compare(a.FailureCount, b.FailureCount)
 	case "region":
 		order = strings.Compare(a.Region, b.Region)
+	case "reference_latency_ms":
+		keyA, keyB := nodeReferenceLatencySortKey(a), nodeReferenceLatencySortKey(b)
+		if keyA != nil && keyB != nil {
+			order = cmp.Compare(*keyA, *keyB)
+		}
+	case "last_latency_probe_attempt":
+		order = compareRFC3339Nano(a.LastLatencyProbeAttempt, b.LastLatencyProbeAttempt)
 	default:
 		order = strings.Compare(nodeTagSortKey(a), nodeTagSortKey(b))
 	}
@@ -53,6 +95,16 @@ func compareNodeSummaries(sortBy string, a, b service.NodeSummary) int {
 
 func sortNodeSummaries(nodes []service.NodeSummary, sorting Sorting) {
 	slices.SortStableFunc(nodes, func(a, b service.NodeSummary) int {
+		aMissing := nodeSortValueMissing(sorting.SortBy, a)
+		bMissing := nodeSortValueMissing(sorting.SortBy, b)
+		switch {
+		case aMissing && bMissing:
+			return strings.Compare(a.NodeHash, b.NodeHash)
+		case aMissing:
+			return 1
+		case bMissing:
+			return -1
+		}
 		return applySortOrder(compareNodeSummaries(sorting.SortBy, a, b), sorting.SortOrder)
 	})
 }
@@ -152,7 +204,10 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 			return
 		}
 
-		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{"tag", "created_at", "failure_count", "region"}, "tag", "asc")
+		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{
+			"tag", "created_at", "failure_count", "region",
+			"reference_latency_ms", "last_latency_probe_attempt",
+		}, "tag", "asc")
 		if !ok {
 			return
 		}
