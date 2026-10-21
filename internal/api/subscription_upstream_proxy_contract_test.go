@@ -147,3 +147,51 @@ func TestAPIContract_SubscriptionUpstreamProxy_ListField(t *testing.T) {
 		t.Fatalf("list did not include created subscriptions: %v", want)
 	}
 }
+
+// A platform upstream may name a platform that does not exist yet: the value is
+// stored as-is and the failure surfaces in the subscription's last_error on the
+// next refresh, so the operator can create the platform afterwards.
+func TestAPIContract_SubscriptionUpstreamProxy_PlatformAccepted(t *testing.T) {
+	srv, _, _ := newControlPlaneTestServer(t)
+
+	rec := doJSONRequest(t, srv, http.MethodPost, "/api/v1/subscriptions", map[string]any{
+		"name":            "upstream-platform",
+		"url":             "https://example.com/up-platform",
+		"upstream_proxy": "  platform:  NotCreatedYet  ",
+	}, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with platform status: got %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	body := decodeJSONMap(t, rec)
+	if body["upstream_proxy"] != "platform:NotCreatedYet" {
+		t.Fatalf("platform value should be normalized: got %v", body["upstream_proxy"])
+	}
+
+	// Empty platform name is still rejected.
+	rec = doJSONRequest(t, srv, http.MethodPost, "/api/v1/subscriptions", map[string]any{
+		"name":            "upstream-platform-empty",
+		"url":             "https://example.com/up-platform-empty",
+		"upstream_proxy": "platform:",
+	}, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty platform name status: got %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	assertErrorCode(t, rec, "INVALID_ARGUMENT")
+}
+
+// Patching to a platform value must be accepted and round-tripped.
+func TestAPIContract_SubscriptionUpstreamProxy_PlatformPatch(t *testing.T) {
+	srv, _, _ := newControlPlaneTestServer(t)
+
+	id := mustCreateSub(t, srv, "patch-platform", "")
+	rec := doJSONRequest(t, srv, http.MethodPatch, "/api/v1/subscriptions/"+id, map[string]any{
+		"upstream_proxy": "platform:HK",
+	}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := decodeJSONMap(t, rec)
+	if body["upstream_proxy"] != "platform:HK" {
+		t.Fatalf("patch roundtrip: got %v", body["upstream_proxy"])
+	}
+}

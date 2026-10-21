@@ -174,6 +174,9 @@ func (a *resinApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.Retr
 		},
 	})
 	a.topoRuntime.leaseCleaner = routing.NewLeaseCleaner(a.topoRuntime.router)
+	// The scheduler is built before the router, so inject the platform-mode
+	// upstream resolver here. Must happen before scheduler.Start().
+	a.topoRuntime.scheduler.SetUpstreamNodePicker(a.topoRuntime.router)
 	log.Println("Router and LeaseCleaner initialized")
 	return retryDL, nil
 }

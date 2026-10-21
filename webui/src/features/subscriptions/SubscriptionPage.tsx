@@ -813,6 +813,12 @@ export function SubscriptionPage() {
                       <p title={selectedSubscription.user_agent}>{selectedSubscription.user_agent}</p>
                     </div>
                   ) : null}
+                  {selectedSubscription.upstream_proxy ? (
+                    <div>
+                      <span>{t("前置代理")}</span>
+                      <p title={selectedSubscription.upstream_proxy}>{selectedSubscription.upstream_proxy}</p>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedSubscription.last_error ? (
@@ -984,10 +990,10 @@ export function SubscriptionPage() {
                     </label>
                     <Input
                       id="edit-sub-upstream-proxy"
-                      placeholder="socks5://127.0.0.1:1080 或 ref:<节点hash>"
+                      placeholder="socks5://127.0.0.1:1080 / ref:<节点hash> / platform:<平台名>"
                       {...editForm.register("upstream_proxy")}
                     />
-                    <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI或 ref:<节点hash>（32 位十六进制）")}</p>
+                    <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI、ref:<节点hash>（32 位十六进制）或 platform:<平台名>（自动选该平台延迟最低的节点，失败自动切换）")}</p>
                   </div>
 
                   <div className="platform-config-actions">
@@ -1239,10 +1245,10 @@ export function SubscriptionPage() {
                 </label>
                 <Input
                   id="create-sub-upstream-proxy"
-                  placeholder="socks5://127.0.0.1:1080 或 ref:<节点hash>"
+                  placeholder="socks5://127.0.0.1:1080 / ref:<节点hash> / platform:<平台名>"
                   {...createForm.register("upstream_proxy")}
                 />
-                <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI或 ref:<节点hash>（32 位十六进制）")}</p>
+                <p className="field-help">{t("留空=直连节点；支持 socks5/http/https 等 URI、ref:<节点hash>（32 位十六进制）或 platform:<平台名>（自动选该平台延迟最低的节点，失败自动切换）")}</p>
               </div>
 
               <div className="detail-actions" style={{ justifyContent: "flex-end" }}>

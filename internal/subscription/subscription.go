@@ -123,9 +123,19 @@ type Subscription struct {
 	// Empty string means "use the process-wide default User-Agent".
 	userAgent string
 	content   string
-	// upstreamProxy is the per-subscription upstream proxy URI or ref:<hash>.
+	// upstreamProxy is the per-subscription upstream proxy URI, ref:<hash>, or
+	// platform:<name>.
 	// Empty string means "no upstream proxy" (direct connection to node servers).
 	upstreamProxy string
+	// upstreamResolvedHash is the node hash that a platform:<name> upstream was
+	// last resolved to. It is runtime-only (never persisted): it lets the
+	// scheduler notice that the picked upstream node dropped out of the
+	// platform's routable view and re-pick a new one.
+	upstreamResolvedHash string
+	// upstreamRetryAtNs schedules an early retry when a platform:<name> upstream
+	// could not be resolved for a transient reason (empty routable view during
+	// startup). Runtime-only. Zero means "no pending retry".
+	upstreamRetryAtNs atomic.Int64
 	// updateIntervalNs is the configured subscription refresh interval.
 	updateIntervalNs      int64
 	name                  string
@@ -254,8 +264,28 @@ func (s *Subscription) SetUpstreamProxy(v string) {
 	s.mu.Lock()
 	if s.upstreamProxy != v {
 		s.upstreamProxy = v
+		// A previous platform pick no longer applies.
+		s.upstreamResolvedHash = ""
 		s.configVersion.Add(1)
 	}
+	s.mu.Unlock()
+}
+
+// UpstreamResolvedHash returns the node hash that a platform:<name> upstream
+// was last resolved to (thread-safe). Empty means "not resolved yet" or the
+// upstream is not platform-based. Runtime-only: never persisted.
+func (s *Subscription) UpstreamResolvedHash() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.upstreamResolvedHash
+}
+
+// SetUpstreamResolvedHash records the node hash a platform upstream resolved
+// to. Does not bump configVersion: the value reflects a completed refresh
+// rather than new refresh input.
+func (s *Subscription) SetUpstreamResolvedHash(hashHex string) {
+	s.mu.Lock()
+	s.upstreamResolvedHash = hashHex
 	s.mu.Unlock()
 }
 
@@ -426,4 +456,24 @@ func cloneTags(tags []string) []string {
 	cp := make([]string, len(tags))
 	copy(cp, tags)
 	return cp
+}
+
+// UpstreamRetryAtNs returns the scheduled early-retry deadline (unix nanos) for
+// a platform upstream that could not be resolved yet. Zero means no pending
+// retry.
+func (s *Subscription) UpstreamRetryAtNs() int64 {
+	return s.upstreamRetryAtNs.Load()
+}
+
+// ScheduleUpstreamRetry asks the scheduler to retry this subscription at the
+// given time without waiting for the full update interval. Used when a
+// platform:<name> upstream has no routable nodes yet (typically during
+// startup), so recovery does not take hours.
+func (s *Subscription) ScheduleUpstreamRetry(atUnixNs int64) {
+	s.upstreamRetryAtNs.Store(atUnixNs)
+}
+
+// ClearUpstreamRetry drops any pending early retry.
+func (s *Subscription) ClearUpstreamRetry() {
+	s.upstreamRetryAtNs.Store(0)
 }

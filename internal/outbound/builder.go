@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
@@ -58,6 +59,11 @@ type SingboxBuilder struct {
 	// registered in the outbound manager. Maps outbound tag → DNS transport tag
 	// (empty string if no DNS transport was needed).
 	registeredUpstreams map[string]string
+	// upstreamMu guards registeredUpstreams. Subscription refreshes run
+	// concurrently (scheduler worker pool), so registration/unregistration can
+	// happen in parallel; an unsynchronised map caused fatal
+	// "concurrent map read and map write" crashes.
+	upstreamMu sync.Mutex
 }
 
 // NewSingboxBuilderWithConfig creates a SingboxBuilder with a complete
@@ -235,10 +241,12 @@ func (b *SingboxBuilder) RegisterDetourOutbound(outboundTag string, dnsTag strin
 		return fmt.Errorf("register detour outbound %q: %w", outboundTag, err)
 	}
 
+	b.upstreamMu.Lock()
 	if b.registeredUpstreams == nil {
 		b.registeredUpstreams = make(map[string]string)
 	}
 	b.registeredUpstreams[outboundTag] = dnsTag
+	b.upstreamMu.Unlock()
 	return nil
 }
 
@@ -248,20 +256,19 @@ func (b *SingboxBuilder) RegisterDetourOutbound(outboundTag string, dnsTag strin
 // RegisterDetourOutbound with the same tag will replace it via Create's built-in
 // idempotent handling. No-op if the tag is not registered.
 func (b *SingboxBuilder) UnregisterDetourOutbound(outboundTag string) {
-	if b.registeredUpstreams == nil {
-		return
-	}
+	b.upstreamMu.Lock()
 	dnsTag, exists := b.registeredUpstreams[outboundTag]
 	if !exists {
+		b.upstreamMu.Unlock()
 		return
 	}
+	delete(b.registeredUpstreams, outboundTag)
+	b.upstreamMu.Unlock()
 
 	// Close the DNS transport if one was registered.
 	if dnsTag != "" && b.dnsTransportManager != nil {
 		_ = b.dnsTransportManager.Remove(dnsTag)
 	}
-
-	delete(b.registeredUpstreams, outboundTag)
 }
 
 // RegisterNodeOutbound registers a built node outbound in the sing-box outbound
@@ -301,7 +308,13 @@ func (b *SingboxBuilder) UnregisterNodeOutbound(_ string) {
 func (b *SingboxBuilder) Close() error {
 	var errs []error
 	// Close per-subscription upstream outbounds.
+	b.upstreamMu.Lock()
+	tags := make([]string, 0, len(b.registeredUpstreams))
 	for tag := range b.registeredUpstreams {
+		tags = append(tags, tag)
+	}
+	b.upstreamMu.Unlock()
+	for _, tag := range tags {
 		b.UnregisterDetourOutbound(tag)
 	}
 	if b.upstreamProxy != nil {

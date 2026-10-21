@@ -65,7 +65,7 @@ It helps shield your services from unstable underlying proxy nodes by aggregatin
 
 When this machine cannot reach some subscription node servers directly, you can configure an **upstream proxy** per subscription: `local → upstream proxy → node server → target` (the target still sees each node's own egress IP). The field is the subscription's `upstream_proxy` (optional; **empty = connect nodes directly**). Set it in the WebUI subscription create/edit form, or via the `upstream_proxy` field of `POST/PATCH /api/v1/subscriptions`.
 
-Two input formats (choose one):
+Three input formats (choose one):
 
 - **External proxy URI**:
   - `socks5://[user:pass@]host:port`, `socks5h://…` (remote DNS resolution)
@@ -73,14 +73,20 @@ Two input formats (choose one):
   - bare `host:port` (treated as http)
   - default ports: socks=1080, http=80, https=443
 - **Node reference**: `ref:<node-hash>` (32-char hex) — use another node's outbound from the global pool as the upstream. The referenced node must exist with a built outbound (otherwise the subscription refresh fails, see `last_error`). **The referenced node must not belong to the same subscription** (self-reference cycles are rejected).
+- **Platform pick**: `platform:<platform name>` — automatically use the **lowest-latency** routable node of that platform as the upstream (latency is the recent authority-domain EWMA average, the same source as the node pool's "reference latency" column; only healthy nodes participate). Resolution happens at refresh time and is equivalent to injecting `ref:<picked hash>`.
+
+  The upstream node switches automatically: when the picked node trips its circuit breaker or leaves the platform's routable set, the scheduler re-picks and refreshes the subscription within the next scan (13–17s), with no manual action. If the platform currently has no routable node (e.g. right after startup before any node landed), the refresh fails and reports it in `last_error`, then retries after 30s.
 
 Behavior and boundaries:
 
 - **Priority**: node-level `detour` (`dialer-proxy` in subscription content) > subscription-level `upstream_proxy`. An existing node detour is never overwritten.
 - **Effect mechanism**: changes take effect on the next scheduled/manual refresh; applying rebuilds all of the subscription's nodes (node hashes change; probing/health state restarts — a one-time churn).
-- **Cycle detection**: `ref:` chains (A→B→A, or cycles across subscriptions via shared nodes) are rejected with an error; max chain depth 10. URI upstreams do not participate in cycle detection.
+- **Cycle detection**: `ref:` chains (A→B→A, or cycles across subscriptions via shared nodes) are rejected with an error; max chain depth 10. A `platform:` upstream treats every subscription owning a node in that platform as a dependency, so an indirect cycle (A uses platform P, P contains B's node, B refs back into A) is also rejected. URI upstreams do not participate in cycle detection.
+- **Platform mode never picks a node owned by the subscription itself** (otherwise every node would dial through itself); such nodes are excluded when picking.
+- **The upstream node must not be a `direct` outbound**: sing-box refuses a detour to an empty direct outbound (`detour to an empty direct outbound makes no sense`). Normal provider subscriptions do not contain such nodes; if a platform holds only direct nodes, every node of the dependent subscription will fail to dial.
 - **Quota accounting unchanged**: the upstream only applies to the "dial the node server" leg; egress IP / per-IP quota / region stats are still computed from node egress.
-- **Not in this iteration**: per-node / per-platform upstream selection, multi-upstream load balancing, cascading cleanup when a referenced node is deleted, rebuild-without-download on upstream change.
+- **Startup constraint**: if every subscription uses `platform:` and all platform members come from those same subscriptions, startup can deadlock on an empty pool. Each subscription retries every 30s, and recovers as soon as any non-platform upstream (direct/URI) subscription populates the pool.
+- **Not in this iteration**: per-node / per-platform upstream selection, multi-upstream load balancing, cascading cleanup when a referenced node is deleted, rebuild-without-download on upstream change, load-balancing rotation inside a platform (re-pick happens only on failure).
 
 ### Supported outbound node types
 

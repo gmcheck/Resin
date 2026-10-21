@@ -2,6 +2,8 @@ package topology
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
@@ -9,11 +11,22 @@ import (
 
 	"github.com/Resinat/Resin/internal/netutil"
 	"github.com/Resinat/Resin/internal/node"
+	"github.com/Resinat/Resin/internal/routing"
 	"github.com/Resinat/Resin/internal/scanloop"
 	"github.com/Resinat/Resin/internal/subscription"
 )
 
 const schedulerLookahead = 15 * time.Second
+
+// UpstreamNodePicker resolves a "platform:<name>" upstream selector to a node
+// hash. Implemented by routing.Router (PickLowestLatencyNode); declared here as
+// an interface so topology does not import routing.
+type UpstreamNodePicker interface {
+	// PickLowestLatencyNodeExcluding picks the lowest-latency routable node in
+	// the platform, never returning a node owned by excludeSubID (a
+	// subscription must not use its own node as its upstream).
+	PickLowestLatencyNodeExcluding(platformName string, excludeSubID string) (node.Hash, error)
+}
 
 // SubscriptionScheduler manages periodic subscription updates.
 type SubscriptionScheduler struct {
@@ -39,6 +52,9 @@ type SubscriptionScheduler struct {
 	// onUnregisterUpstream unregisters a subscription-level upstream proxy
 	// outbound (URI mode) after pool diff.
 	onUnregisterUpstream func(subID string)
+	// upstreamPicker resolves a "platform:<name>" upstream to a concrete node.
+	// Nil disables platform-mode upstreams.
+	upstreamPicker UpstreamNodePicker
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -60,6 +76,9 @@ type SchedulerConfig struct {
 	// outbound (URI mode) after pool diff when the new upstream is no longer
 	// a URI. No-op if nothing was registered.
 	OnUnregisterUpstream func(subID string)
+	// UpstreamNodePicker resolves "platform:<name>" upstreams to a node hash.
+	// Optional; when nil, platform-mode upstreams fail at refresh time.
+	UpstreamNodePicker UpstreamNodePicker
 }
 
 // NewSubscriptionScheduler creates a new scheduler.
@@ -75,6 +94,7 @@ func NewSubscriptionScheduler(cfg SchedulerConfig) *SubscriptionScheduler {
 		onSubReenabledNode: cfg.OnSubReenabledNode,
 		onRegisterUpstream: cfg.OnRegisterUpstream,
 		onUnregisterUpstream: cfg.OnUnregisterUpstream,
+		upstreamPicker:     cfg.UpstreamNodePicker,
 		stopCh:             make(chan struct{}),
 	}
 	if cfg.Fetcher != nil {
@@ -83,6 +103,12 @@ func NewSubscriptionScheduler(cfg SchedulerConfig) *SubscriptionScheduler {
 		sched.Fetcher = sched.fetchViaDownloader
 	}
 	return sched
+}
+
+// SetUpstreamNodePicker injects the platform-mode upstream resolver. Must be
+// called before Start: the scheduler is constructed before the router.
+func (s *SubscriptionScheduler) SetUpstreamNodePicker(p UpstreamNodePicker) {
+	s.upstreamPicker = p
 }
 
 // Start launches the background scheduler goroutine.
@@ -155,6 +181,19 @@ func (s *SubscriptionScheduler) tick() {
 		if !sub.Enabled() {
 			return true
 		}
+		// Early retry requested after a transient platform-upstream failure.
+		if retryAt := sub.UpstreamRetryAtNs(); retryAt > 0 {
+			if now >= retryAt {
+				sub.ClearUpstreamRetry()
+				dueSubs = append(dueSubs, sub)
+			}
+			return true
+		}
+		// Re-pick when the resolved platform upstream node is no longer routable.
+		if s.platformUpstreamStale(sub) {
+			dueSubs = append(dueSubs, sub)
+			return true
+		}
 		// Check if due: lastChecked + interval - lookahead <= now.
 		if sub.LastCheckedNs.Load()+sub.UpdateIntervalNs()-int64(schedulerLookahead) <= now {
 			dueSubs = append(dueSubs, sub)
@@ -162,6 +201,47 @@ func (s *SubscriptionScheduler) tick() {
 		return true
 	})
 	s.runUpdatesWithWorkerLimit(dueSubs)
+}
+
+// platformUpstreamStale reports whether the subscription uses a platform:<name>
+// upstream whose previously resolved node has dropped out of that platform's
+// routable view (circuit opened, subscription disabled, filters changed, node
+// removed, ...). Such a subscription must be refreshed so a new upstream node
+// is picked.
+//
+// The check is O(1) and runs once per tick, which bounds the switch latency to
+// one scan interval (13-17s) without hooking into the circuit-breaker path.
+func (s *SubscriptionScheduler) platformUpstreamStale(sub *subscription.Subscription) bool {
+	if s.pool == nil || !subscription.IsUpstreamPlatform(sub.UpstreamProxy()) {
+		return false
+	}
+	resolved := sub.UpstreamResolvedHash()
+	if resolved == "" {
+		// Not resolved yet: either never refreshed or a refresh is pending.
+		// Let the normal interval handle it rather than looping here.
+		return false
+	}
+	// Cooldown: a refresh triggered by this check already ran recently but the
+	// staleness persists (e.g. the refresh failed for an unrelated reason such
+	// as a download error). Back off instead of re-downloading every tick.
+	if last := sub.LastCheckedNs.Load(); last > 0 &&
+		time.Since(time.Unix(0, last)) < platformStaleRefreshCooldown {
+		return false
+	}
+	name := subscription.ParsePlatformName(sub.UpstreamProxy())
+	if name == "" {
+		return false
+	}
+	plat, ok := s.pool.GetPlatformByName(name)
+	if !ok {
+		// Platform vanished; nothing to re-pick. Refresh will report the error.
+		return false
+	}
+	hash, err := node.ParseHex(resolved)
+	if err != nil {
+		return false
+	}
+	return !plat.View().Contains(hash)
 }
 
 func (s *SubscriptionScheduler) runUpdatesWithWorkerLimit(subs []*subscription.Subscription) {
@@ -241,13 +321,26 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	// 2b. Inject upstream detour into parsed node options (lock-free).
 	// This changes each ParsedNode's RawOptions (adds detour field) so that
 	// the node outbound will dial through the subscription's upstream proxy.
-	parsed = subscription.ApplyUpstreamDetour(parsed, attemptUpstream, sub.ID)
+	// A "platform:<name>" upstream is resolved to a concrete node first and
+	// then injected as "ref:<hash>", reusing the node-reference path.
+	injectedUpstream := attemptUpstream
+	platformResolved := false
+	if subscription.IsUpstreamPlatform(attemptUpstream) {
+		resolved, perr := s.resolvePlatformUpstream(sub, attemptUpstream)
+		if perr != nil {
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "upstream_platform", perr)
+			return
+		}
+		injectedUpstream = resolved
+		platformResolved = true
+	}
+	parsed = subscription.ApplyUpstreamDetour(parsed, injectedUpstream, sub.ID)
 
 	// 2b-2. Cycle check for ref-mode upstream: a "ref:<hash>" chain must
 	// not form a cycle (only ref references can close a Resin-internal loop; URI
 	// upstreams point outside Resin and cannot cycle).
-	if subscription.IsUpstreamRef(attemptUpstream) && s.pool != nil {
-		if err := subscription.ValidateUpstreamRefNoCycle(sub.ID, attemptUpstream, s.subManager, s.pool); err != nil {
+	if subscription.IsUpstreamRef(injectedUpstream) && s.pool != nil {
+		if err := subscription.ValidateUpstreamRefNoCycle(sub.ID, injectedUpstream, s.subManager, s.pool); err != nil {
 			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "upstream_cycle", err)
 			return
 		}
@@ -255,7 +348,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 
 	// 2c. Register URI-mode upstream outbound in sbOutbound manager
 	// (must happen before pool diff so node outbounds can resolve the detour).
-	isURIUpstream := attemptUpstream != "" && !subscription.IsUpstreamRef(attemptUpstream)
+	isURIUpstream := attemptUpstream != "" && !subscription.IsUpstreamRef(attemptUpstream) && !subscription.IsUpstreamPlatform(attemptUpstream)
 	if isURIUpstream && s.onRegisterUpstream != nil {
 		if err := s.onRegisterUpstream(sub.ID, attemptUpstream); err != nil {
 			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "register_upstream", err)
@@ -366,6 +459,17 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		now := time.Now().UnixNano()
 		sub.LastCheckedNs.Store(now)
 		sub.LastUpdatedNs.Store(now)
+		// Record which node a platform upstream resolved to so the scheduler
+		// can detect later that the picked node left the platform's routable
+		// view. Written under the op lock so a concurrent upstream change (which
+		// bumps configVersion and clears this field) cannot be overwritten by a
+		// stale attempt.
+		if platformResolved {
+			sub.SetUpstreamResolvedHash(subscription.ParseUpstreamRefHash(injectedUpstream))
+		} else {
+			sub.SetUpstreamResolvedHash("")
+		}
+		sub.ClearUpstreamRetry()
 		sub.MarkAppliedAttempt(attemptSeq)
 		sub.SetLastError("")
 		applied = true
@@ -385,6 +489,45 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		s.onUnregisterUpstream(sub.ID)
 	}
 }
+
+// resolvePlatformUpstream resolves a "platform:<name>" upstream selector to a
+// concrete "ref:<hash>" value using the platform's routable node set.
+//
+// Latency policy is fixed to lowest-latency (the operator opted for this when
+// choosing platform mode). Permanent configuration errors (unknown platform,
+// malformed selector) fail the refresh and wait for the normal interval;
+// transient ones (no routable node yet, e.g. during startup before any
+// subscription populated the pool) additionally schedule a short retry so the
+// subscription recovers without waiting hours.
+func (s *SubscriptionScheduler) resolvePlatformUpstream(
+	sub *subscription.Subscription,
+	upstream string,
+) (string, error) {
+	name := subscription.ParsePlatformName(upstream)
+	if name == "" {
+		return "", fmt.Errorf("upstream_proxy: invalid platform selector %q", upstream)
+	}
+	if s.upstreamPicker == nil {
+		return "", fmt.Errorf("upstream_proxy: platform %q is not supported in this build", name)
+	}
+	hash, err := s.upstreamPicker.PickLowestLatencyNodeExcluding(name, sub.ID)
+	if err != nil {
+		if errors.Is(err, routing.ErrNoAvailableNodes) {
+			sub.ScheduleUpstreamRetry(time.Now().Add(upstreamRetryDelay).UnixNano())
+			return "", fmt.Errorf("upstream_proxy: platform %q has no routable node yet: %v", name, err)
+		}
+		return "", fmt.Errorf("upstream_proxy: platform %q: %v", name, err)
+	}
+	return "ref:" + hash.Hex(), nil
+}
+
+// upstreamRetryDelay is how soon a subscription whose platform upstream has no
+// routable node yet should be retried.
+const upstreamRetryDelay = 30 * time.Second
+
+// platformStaleRefreshCooldown bounds how often a stale platform upstream can
+// force a refresh, so a persistently failing refresh cannot hammer the source.
+const platformStaleRefreshCooldown = 60 * time.Second
 
 // handleUpdateFailure applies a fetch/parse failure to subscription state.
 // It ignores stale failures from an outdated attempt (config-version guard +

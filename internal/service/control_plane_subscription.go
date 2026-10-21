@@ -152,7 +152,12 @@ func parseSubscriptionSourceType(raw *string) (string, *ServiceError) {
 
 // parseUpstreamProxyValue validates a subscription upstream_proxy value.
 // Empty is allowed (direct connection). URI values are validated with the
-// outbound parser; "ref:<hash>" requires a 32-character hex node hash.
+// outbound parser; "ref:<hash>" requires a 32-character hex node hash;
+// "platform:<name>" only needs a non-empty name.
+//
+// A platform name is deliberately not required to exist yet: the platform may
+// be created later, and the subscription will then pick up a node on its next
+// refresh. An unknown platform surfaces in the subscription's last_error.
 func parseUpstreamProxyValue(raw *string) (string, *ServiceError) {
 	if raw == nil {
 		return "", nil
@@ -166,6 +171,13 @@ func parseUpstreamProxyValue(raw *string) (string, *ServiceError) {
 			return "", invalidArg("upstream_proxy: ref: must be a 32-character hex node hash")
 		}
 		return value, nil
+	}
+	if subscription.IsUpstreamPlatform(value) {
+		name := subscription.ParsePlatformName(value)
+		if name == "" {
+			return "", invalidArg("upstream_proxy: platform: requires a non-empty platform name")
+		}
+		return subscription.UpstreamPlatformValue(name), nil
 	}
 	if err := outbound.ValidateUpstreamProxyURL(value); err != nil {
 		return "", invalidArg("upstream_proxy: " + err.Error())
